@@ -1,0 +1,31 @@
+# Python / FastAPI
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+.pytest_cache/
+
+# Environment & Secrets
+.env
+.env.*
+!.env.example
+
+# Local Data & Volumes
+data/
+cvs/
+audio/
+vector/
+*.db
+*.sqlite3
+
+# Node / Frontend
+node_modules/
+.next/
+out/
+
+# OS / Editor
+.DS_Store
+.vscode/
+!.vscode/settings.json

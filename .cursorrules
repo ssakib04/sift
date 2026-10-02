@@ -1,0 +1,7 @@
+# Strict AI Development Rules
+rules:
+  - Do not write placeholder functions, mock data, or "// TODO" comments.
+  - Every new module, route, or service MUST include a corresponding pytest unit test.
+  - Adhere strictly to Python 3.11+ type hinting, Pydantic v2 schemas, and async SQLModel/SQLAlchemy.
+  - Strictly maintain the project directory structure defined in backend/ and frontend/.
+  - Do not create or edit files outside the explicitly requested module in a single turn.
