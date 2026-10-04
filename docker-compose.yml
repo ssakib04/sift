@@ -1,0 +1,71 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-sift}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sift_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-sift_db}
+    ports:
+      - "${POSTGRES_HOST_PORT:-5433}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sift} -d ${POSTGRES_DB:-sift_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      PROJECT_NAME: ${PROJECT_NAME:-Sift}
+      POSTGRES_SERVER: db
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-sift}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sift_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-sift_db}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-sift}:${POSTGRES_PASSWORD:-sift_secret}@db:5432/${POSTGRES_DB:-sift_db}
+      REDIS_URL: redis://redis:6379/0
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-your_anthropic_api_key_here}
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app/backend
+    command:
+      [
+        "uvicorn",
+        "app.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--reload",
+        "--reload-dir",
+        "/app/backend",
+      ]
+
+volumes:
+  postgres_data:
+  redis_data:
