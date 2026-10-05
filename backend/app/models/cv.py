@@ -24,7 +24,13 @@ class CV(ValidatedSQLModel, table=True):
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     candidate_id: uuid.UUID = Field(foreign_key="candidate.id", index=True)
+    file_hash: str = Field(unique=True, index=True)
+    file_name: str
+    file_size: int
+    mime_type: str
     file_path: str = Field(min_length=1, max_length=1024)
+    character_count: int = Field(default=0)
+    extraction_status: str = Field(default="completed", index=True)
     raw_text: str = Field(min_length=1, sa_type=Text)
     embedding: list[float] | None = Field(
         default=None,
