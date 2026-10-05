@@ -1,17 +1,11 @@
 """Sift Candidate Screening API application entrypoint."""
 
-from collections.abc import Sequence
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
 from app.api.v1.health import SERVICE_VERSION
-
-ALLOWED_ORIGINS: Sequence[str] = (
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-)
+from app.core.config import settings
 
 app = FastAPI(
     title="Sift Candidate Screening API",
@@ -23,7 +17,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=list(ALLOWED_ORIGINS),
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "Accept"],

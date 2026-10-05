@@ -18,6 +18,9 @@ from app.models.cv import EMBEDDING_DIMENSIONS
 
 EXPECTED_TABLES = {
     "job_profile",
+    "jobs",
+    "job_versions",
+    "job_checklist_queries",
     "candidate",
     "cv",
     "score",
@@ -47,7 +50,14 @@ def test_settings_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
         "POSTGRES_DB",
         "DATABASE_URL",
         "REDIS_URL",
+        "SECRET_KEY",
+        "CORS_ORIGINS",
         "ANTHROPIC_API_KEY",
+        "GEMINI_API_KEY",
+        "GOOGLE_API_KEY",
+        "OLLAMA_BASE_URL",
+        "DEFAULT_LLM_TEMPERATURE",
+        "EMBEDDING_MODEL_NAME",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -62,7 +72,25 @@ def test_settings_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.POSTGRES_DB == "sift_db"
     assert settings.DATABASE_URL == "postgresql://sift:sift_secret@localhost:5433/sift_db"
     assert settings.REDIS_URL == "redis://localhost:6379/0"
-    assert settings.ANTHROPIC_API_KEY == "your_anthropic_api_key_here"
+    assert settings.SECRET_KEY == ""
+    assert settings.CORS_ORIGINS == ["http://localhost:3000", "http://127.0.0.1:3000"]
+    assert settings.ANTHROPIC_API_KEY == ""
+    assert settings.GEMINI_API_KEY == ""
+    assert settings.GOOGLE_API_KEY == ""
+    assert settings.OLLAMA_BASE_URL == "http://ollama:11434"
+    assert settings.DEFAULT_LLM_TEMPERATURE == 0.0
+    assert settings.EMBEDDING_MODEL_NAME == "all-MiniLM-L6-v2"
+
+
+def test_settings_synchronize_gemini_and_google_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A key supplied under either Gemini name is copied onto both fields."""
+    monkeypatch.setenv("GEMINI_API_KEY", "")
+    monkeypatch.setenv("GOOGLE_API_KEY", "google-fallback-key")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.GEMINI_API_KEY == "google-fallback-key"
+    assert settings.GOOGLE_API_KEY == "google-fallback-key"
 
 
 def test_normalize_database_url_pins_psycopg2() -> None:
