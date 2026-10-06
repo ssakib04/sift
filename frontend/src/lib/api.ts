@@ -27,7 +27,35 @@ export type JobVersion = {
 export type JobRecord = {
   id: string;
   title: string;
+  mail_subject: string;
+  apply_email: string;
   versions: JobVersion[];
+};
+
+export type CandidateEvaluation = {
+  query_id: string;
+  status: string;
+  confidence: number;
+  evidence: string;
+  semantic_score: number;
+};
+
+export type CandidateRecord = {
+  id: string;
+  email: string;
+  full_name: string;
+  rank: number | null;
+  aggregate_score: number | null;
+  parse_status: string;
+  parse_method: string;
+  invited: boolean;
+  evaluations: CandidateEvaluation[];
+};
+
+export type InviteRecord = {
+  job_title: string;
+  company_name: string;
+  status: string;
 };
 
 export type PolicyRecord = {
@@ -48,6 +76,9 @@ export type PublicJob = {
   company_name: string;
   company_country: string;
   minimum_years: number;
+  job_id: string;
+  apply_email: string;
+  apply_subject: string;
 };
 
 export class ApiError extends Error {
