@@ -1,0 +1,1 @@
+"""Sift FastAPI application package."""
