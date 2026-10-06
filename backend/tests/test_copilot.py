@@ -86,6 +86,8 @@ def test_job_summary_reports_status_without_rubrics() -> None:
     job = JobRead(
         id=uuid4(),
         title="Backend Engineer",
+        mail_subject="Backend Engineer",
+        apply_email="careers@sift.local",
         created_at=datetime.now(UTC),
         versions=[
             JobVersionRead(
