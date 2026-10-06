@@ -55,7 +55,7 @@ async def create_job(
         raise
     queries = _coerce_queries(result.get("queries"))
     now = datetime.now(UTC)
-    job = Job(id=uuid.uuid4(), title=request.title, created_at=now)
+    job = Job(id=uuid.uuid4(), title=request.title, mail_subject=request.title.strip(), created_at=now)
     version = _version_from_request(
         job_id=job.id,
         request=request,
@@ -381,6 +381,8 @@ def _to_job_read(job: Job, settings: Settings) -> JobRead:
     return JobRead(
         id=job.id,
         title=job.title,
+        mail_subject=job.mail_subject,
+        apply_email=settings.apply_to_address,
         created_at=job.created_at,
         versions=[_to_version_read(version) for version in versions],
     )
@@ -428,9 +430,11 @@ def _to_version_read(version: JobVersion) -> JobVersionRead:
 
 
 def _to_public(version: JobVersion, settings: Settings) -> PublicJobRead:
+    job = version.job
     return PublicJobRead(
         version_id=version.id,
-        title=version.job.title if version.job is not None else "",
+        job_id=job.id if job is not None else version.job_id,
+        title=job.title if job is not None else "",
         seniority=version.seniority,
         description=version.description,
         contract=version.contract,
@@ -438,5 +442,7 @@ def _to_public(version: JobVersion, settings: Settings) -> PublicJobRead:
         company_name=settings.company_name,
         company_country=settings.company_country,
         minimum_years=version.minimum_years,
+        apply_email=settings.apply_to_address,
+        apply_subject=job.mail_subject if job is not None else "",
     )
 

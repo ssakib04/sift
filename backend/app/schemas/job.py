@@ -179,12 +179,15 @@ class JobVersionRead(BaseModel):
 class JobRead(BaseModel):
     id: UUID
     title: str
+    mail_subject: str
+    apply_email: str
     created_at: datetime
     versions: list[JobVersionRead]
 
 
 class PublicJobRead(BaseModel):
     version_id: UUID
+    job_id: UUID
     title: str
     seniority: str
     description: str
@@ -193,3 +196,5 @@ class PublicJobRead(BaseModel):
     company_name: str
     company_country: str
     minimum_years: int
+    apply_email: str
+    apply_subject: str

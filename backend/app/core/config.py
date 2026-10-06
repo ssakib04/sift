@@ -40,6 +40,13 @@ class Settings(BaseSettings):
     embedding_backend: str = "hashing"
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     cors_origins: str = "http://localhost:3000"
+    mailpit_base_url: str = "http://localhost:8025"
+    smtp_host: str = "localhost"
+    smtp_port: int = 1025
+    invite_from_address: str = "jobs@sift.local"
+    apply_to_address: str = "careers@sift.local"
+    cv_storage_dir: str = "data/cvs"
+    mail_poll_seconds: int = 20
 
 
 @lru_cache
