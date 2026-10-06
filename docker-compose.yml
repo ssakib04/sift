@@ -65,15 +65,58 @@ services:
       EMBEDDING_BACKEND: ${EMBEDDING_BACKEND:-hashing}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      MAILPIT_BASE_URL: http://mailpit:8025
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
+      INVITE_FROM_ADDRESS: ${INVITE_FROM_ADDRESS:-jobs@sift.local}
+      APPLY_TO_ADDRESS: ${APPLY_TO_ADDRESS:-careers@sift.local}
+      CV_STORAGE_DIR: /data/cvs
+      MAIL_POLL_SECONDS: ${MAIL_POLL_SECONDS:-20}
     ports:
       - "8000:8000"
     volumes:
       - policy_data:/data/policies
+      - cv_data:/data/cvs
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      mailpit:
+        condition: service_started
+
+  worker:
+    build: ./backend
+    command: python -m app.worker
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-sift}:${POSTGRES_PASSWORD:-sift}@postgres:5432/${POSTGRES_DB:-sift}
+      REDIS_URL: redis://redis:6379/0
+      OLLAMA_BASE_URL: http://ollama:11434
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-4-6}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.1-pro-preview}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2}
+      EMBEDDING_BACKEND: ${EMBEDDING_BACKEND:-hashing}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+      MAILPIT_BASE_URL: http://mailpit:8025
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
+      INVITE_FROM_ADDRESS: ${INVITE_FROM_ADDRESS:-jobs@sift.local}
+      APPLY_TO_ADDRESS: ${APPLY_TO_ADDRESS:-careers@sift.local}
+      CV_STORAGE_DIR: /data/cvs
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://localhost:3000}
+      COMPANY_NAME: ${COMPANY_NAME:-Sift}
+      MAIL_POLL_SECONDS: ${MAIL_POLL_SECONDS:-20}
+    volumes:
+      - cv_data:/data/cvs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
 
   frontend:
     build:
@@ -90,3 +133,4 @@ volumes:
   redis_data:
   ollama_data:
   policy_data:
+  cv_data:
