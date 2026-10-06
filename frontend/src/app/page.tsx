@@ -1,3 +1,5 @@
+import { SectionLinks } from "@/components/section-links";
+
 export default function HomePage() {
   return (
     <main className="flex min-h-screen items-center justify-center bg-slate-950 text-slate-100">
@@ -7,6 +9,9 @@ export default function HomePage() {
         <p className="text-slate-300">
           Foundation services are ready for the next phase of the recruitment workflow.
         </p>
+        <div className="flex justify-center pt-4">
+          <SectionLinks />
+        </div>
       </div>
     </main>
   );

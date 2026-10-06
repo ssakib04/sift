@@ -81,7 +81,7 @@ class FallbackLLMManager:
 
 
 class AnthropicProvider:
-    def __init__(self, *, api_key: str, model: str, max_tokens: int = 1024) -> None:
+    def __init__(self, *, api_key: str, model: str, max_tokens: int = 4096) -> None:
         self._api_key = api_key
         self._model = model
         self._max_tokens = max_tokens

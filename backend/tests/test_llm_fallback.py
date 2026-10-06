@@ -102,8 +102,8 @@ def test_create_fallback_manager_wires_three_tiers() -> None:
 
 @pytest.mark.asyncio
 async def test_cloud_providers_reject_missing_api_keys() -> None:
-    claude = AnthropicProvider(api_key="", model="claude-3-5-sonnet-20241022")
-    gemini = GeminiProvider(api_key="", model="gemini-1.5-pro")
+    claude = AnthropicProvider(api_key="", model="claude-sonnet-4-6")
+    gemini = GeminiProvider(api_key="", model="gemini-3.1-pro-preview")
 
     with pytest.raises(LLMProviderError):
         await claude.complete("hello")

@@ -1,6 +1,6 @@
 import pytest
 
-from app.core.config import Settings
+from app.core.config import Settings, env_file_paths
 
 _SETTING_ENV_VARS = (
     "DATABASE_URL",
@@ -14,6 +14,14 @@ _SETTING_ENV_VARS = (
 )
 
 
+def test_env_files_cover_repo_root_and_backend() -> None:
+    root_env, backend_env = env_file_paths()
+    assert root_env.name == ".env"
+    assert backend_env.name == ".env"
+    assert backend_env.parent.name == "backend"
+    assert root_env.parent == backend_env.parent.parent
+
+
 def test_settings_default_to_phase1_models(monkeypatch: pytest.MonkeyPatch) -> None:
     for name in _SETTING_ENV_VARS:
         monkeypatch.delenv(name, raising=False)
@@ -23,8 +31,8 @@ def test_settings_default_to_phase1_models(monkeypatch: pytest.MonkeyPatch) -> N
     assert settings.database_url == "postgresql+asyncpg://sift:sift@localhost:5432/sift"
     assert settings.redis_url == "redis://localhost:6379/0"
     assert settings.ollama_base_url == "http://localhost:11434"
-    assert settings.anthropic_model == "claude-3-5-sonnet-20241022"
-    assert settings.gemini_model == "gemini-1.5-pro"
+    assert settings.anthropic_model == "claude-sonnet-4-6"
+    assert settings.gemini_model == "gemini-3.1-pro-preview"
     assert settings.ollama_model == "llama3.2"
     assert settings.anthropic_api_key == ""
     assert settings.gemini_api_key == ""
