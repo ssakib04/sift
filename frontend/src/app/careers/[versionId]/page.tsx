@@ -42,6 +42,16 @@ export default function CareerDetailPage({ params }: { params: { versionId: stri
               {job.seniority} · {job.contract} · {job.company_country} · {job.minimum_years}+ years
             </p>
             <p className="whitespace-pre-wrap leading-7 text-slate-200">{job.description}</p>
+            <section className="space-y-2 rounded-xl border border-slate-800 bg-slate-900 p-4 text-sm">
+              <h2 className="text-base font-medium">Apply by email</h2>
+              <p>
+                Send your CV as a PDF or DOCX to <span className="text-white">{job.apply_email}</span>.
+              </p>
+              <p>
+                Subject: <span className="text-white">{job.apply_subject}</span>
+              </p>
+              <p className="text-slate-400">You can also put the job id {job.job_id} in the subject line.</p>
+            </section>
             {structuredData ? (
               <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData) }} />
             ) : null}
