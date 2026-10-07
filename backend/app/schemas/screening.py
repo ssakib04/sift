@@ -25,6 +25,15 @@ class CandidateRead(BaseModel):
     fairness_flags: list[str]
     justifications: list[str]
     evaluations: list[QueryEvaluationRead]
+    job_id: UUID | None = None
+    job_title: str = ""
+
+
+class CandidateGroupRead(BaseModel):
+    job_id: UUID
+    job_title: str
+    mail_subject: str
+    candidates: list[CandidateRead]
 
 
 class InboxPollRead(BaseModel):
