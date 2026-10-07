@@ -82,6 +82,27 @@ async def test_workflow_accepts_rubric_objects_as_text() -> None:
 
 
 @pytest.mark.asyncio
+async def test_workflow_lifts_a_zero_query_weight() -> None:
+    import json
+
+    description = "A" * 120
+    queries = sample_queries()
+    queries[9]["weight"] = 0.0
+    provider = ScriptedProvider(
+        [
+            json.dumps({"description": description}),
+            json.dumps({"queries": queries}),
+        ]
+    )
+    llm = FallbackLLMManager(provider, provider, provider)
+    run = build_job_creation_graph(llm, StaticRetriever())
+    result = await run(state_from_request(_request()))
+
+    assert all(query.weight > 0 for query in result["queries"])
+    assert abs(sum(query.weight for query in result["queries"]) - 1) < 0.001
+
+
+@pytest.mark.asyncio
 async def test_workflow_rejects_incomplete_checklist() -> None:
     import json
 

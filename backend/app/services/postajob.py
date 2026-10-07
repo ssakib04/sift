@@ -17,6 +17,8 @@ class PublishRequest(BaseModel):
     seniority: str
     skills: list[str]
     version_id: str
+    apply_email: str = ""
+    mail_subject: str = ""
 
 
 class PublishResult(BaseModel):

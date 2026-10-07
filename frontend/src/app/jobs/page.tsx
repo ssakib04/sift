@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
 import { SectionLinks } from "@/components/section-links";
@@ -17,7 +17,7 @@ const CATEGORIES = [
 
 type DraftQuery = ChecklistQuery;
 
-export default function JobsPage() {
+function JobsPageContent() {
   const [job, setJob] = useState<JobRecord | null>(null);
   const [description, setDescription] = useState("");
   const [queries, setQueries] = useState<DraftQuery[]>([]);
@@ -365,5 +365,13 @@ export default function JobsPage() {
         {message ? <p className="text-sm text-slate-300">{message}</p> : null}
       </div>
     </main>
+  );
+}
+
+export default function JobsPage() {
+  return (
+    <Suspense fallback={<main className="min-h-screen bg-slate-950" />}>
+      <JobsPageContent />
+    </Suspense>
   );
 }
