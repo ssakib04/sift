@@ -17,7 +17,13 @@ def build_channel_text(request: PublishRequest) -> str:
         f"<b>{_escape(request.title)}</b>\n"
         f"{_escape(request.company_name)} · {_escape(request.seniority)} · {_escape(request.contract)}\n\n"
     )
-    footer = f'\n\n<a href="{_escape(request.apply_url)}">Apply</a>'
+    apply_note = ""
+    if request.apply_email.strip() and request.mail_subject.strip():
+        apply_note = (
+            f"\n\nEmail a PDF or DOCX CV to {_escape(request.apply_email)}."
+            f"\nSubject: {_escape(request.mail_subject)}"
+        )
+    footer = f'{apply_note}\n\n<a href="{_escape(request.apply_url)}">Apply</a>'
     room = _MESSAGE_LIMIT - len(header) - len(footer)
     if len(description) > room:
         description = description[: max(room - 1, 0)].rstrip() + "…"

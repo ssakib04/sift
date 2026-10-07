@@ -31,6 +31,15 @@ def test_channel_text_is_public_job_only() -> None:
     assert "http://localhost:3000/careers/version-1" in text
 
 
+def test_channel_text_includes_apply_mailbox_and_subject() -> None:
+    request = _request().model_copy(
+        update={"apply_email": "kazisadmansakib@gmail.com", "mail_subject": "Front End Developer"}
+    )
+    text = build_channel_text(request)
+    assert "kazisadmansakib@gmail.com" in text
+    assert "Subject: Front End Developer" in text
+
+
 @pytest.mark.asyncio
 async def test_poster_sends_one_channel_message() -> None:
     seen: list[dict[str, object]] = []

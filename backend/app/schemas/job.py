@@ -46,7 +46,7 @@ class ChecklistQuery(BaseModel):
     question: str = Field(min_length=8)
     dimension: Dimension
     requirement_type: RequirementType
-    weight: float = Field(gt=0)
+    weight: float = Field(ge=0)
     evidence_hints: list[str] = Field(min_length=1)
     scoring_rubric: str = Field(min_length=8)
 
@@ -84,13 +84,17 @@ class ChecklistQuerySet(BaseModel):
         if set(identifiers) != set(QUERY_IDS):
             raise ValueError("checklist must contain each query id from Q1 through Q10 once")
         ordered = sorted(self.queries, key=lambda query: int(query.query_id[1:]))
-        total = sum(query.weight for query in ordered)
-        if total <= 0:
-            share = 1 / len(ordered)
-            normalized = [query.model_copy(update={"weight": share}) for query in ordered]
+        weights = [query.weight if query.weight > 0 else 0.0 for query in ordered]
+        if sum(weights) <= 0:
+            weights = [1 / len(ordered)] * len(ordered)
         else:
-            normalized = [query.model_copy(update={"weight": query.weight / total}) for query in ordered]
-        self.queries = normalized
+            floor = min(weight for weight in weights if weight > 0)
+            weights = [weight if weight > 0 else floor for weight in weights]
+            total = sum(weights)
+            weights = [weight / total for weight in weights]
+        self.queries = [
+            query.model_copy(update={"weight": weight}) for query, weight in zip(ordered, weights, strict=True)
+        ]
         return self
 
 

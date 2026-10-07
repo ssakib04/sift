@@ -24,6 +24,7 @@ from app.schemas.job import (
     PublicJobRead,
 )
 from app.services.job_rules import ensure_can_open_version, ensure_editable
+from app.services.mcp_publish import McpPublishError, publish_via_mcp
 from app.services.postajob import JobPoster, PostAJobError, PublishRequest
 from app.services.telegram import TelegramError
 
@@ -109,7 +110,14 @@ async def approve_version(
     version.status = "locked"
     version.locked_at = datetime.now(UTC)
     apply_url = f"{settings.public_app_url.rstrip('/')}/careers/{version.id}"
-    version.posting = await _publish(version, job.title, apply_url, poster, settings)
+    version.posting = await _publish(
+        version,
+        job.title,
+        apply_url,
+        poster,
+        settings,
+        mail_subject=job.mail_subject,
+    )
     await session.commit()
     stored = await _require_job(session, job_id)
     return _to_job_read(stored, settings)
@@ -256,6 +264,7 @@ async def _publish(
     apply_url: str,
     poster: JobPoster,
     settings: Settings,
+    mail_subject: str = "",
 ) -> JobPosting:
     if len(version.description) < 100:
         return _posting(version.id, apply_url, status="skipped", detail="description_too_short")
@@ -270,7 +279,11 @@ async def _publish(
         seniority=version.seniority,
         skills=list(version.required_skills) + list(version.preferred_skills),
         version_id=str(version.id),
+        apply_email=settings.apply_to_address,
+        mail_subject=mail_subject.strip() or title,
     )
+    if settings.mcp_server_url.strip():
+        return await _publish_mcp(version.id, apply_url, request, settings)
     if settings.telegram_bot_token and settings.telegram_chat_id:
         return await _publish_telegram(version.id, apply_url, request, poster, settings)
     if not settings.postajob_api_key:
@@ -288,6 +301,30 @@ async def _publish(
         apply_url,
         status=result.status,
         external_id=result.external_id,
+    )
+
+
+async def _publish_mcp(
+    version_id: uuid.UUID,
+    apply_url: str,
+    request: PublishRequest,
+    settings: Settings,
+) -> JobPosting:
+    try:
+        result = await publish_via_mcp(settings.mcp_server_url.strip(), request)
+    except McpPublishError as exc:
+        logger.warning("mcp_publish_failed error_type=%s", type(exc).__name__)
+        return _posting(version_id, apply_url, provider="mcp", status="failed", detail=str(exc)[:128])
+    except Exception as exc:
+        logger.warning("mcp_publish_failed error_type=%s", type(exc).__name__)
+        return _posting(version_id, apply_url, provider="mcp", status="failed", detail=type(exc).__name__)
+    return _posting(
+        version_id,
+        apply_url,
+        provider="mcp",
+        status=result.status,
+        external_id=result.external_id,
+        detail=result.detail,
     )
 
 

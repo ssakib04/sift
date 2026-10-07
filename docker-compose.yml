@@ -45,6 +45,8 @@ services:
 
   api:
     build: ./backend
+    env_file:
+      - ./backend/.env
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-sift}:${POSTGRES_PASSWORD:-sift}@postgres:5432/${POSTGRES_DB:-sift}
       REDIS_URL: redis://redis:6379/0
@@ -52,13 +54,14 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-4-6}
-      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.1-pro-preview}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash-lite}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2}
       POLICY_STORAGE_DIR: /data/policies
       POSTAJOB_API_KEY: ${POSTAJOB_API_KEY:-}
       POSTAJOB_BASE_URL: ${POSTAJOB_BASE_URL:-https://api.postajob.io/v1}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      MCP_SERVER_URL: http://mcp:8080/mcp
       PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://localhost:3000}
       COMPANY_NAME: ${COMPANY_NAME:-Sift}
       COMPANY_COUNTRY: ${COMPANY_COUNTRY:-Bangladesh}
@@ -66,10 +69,6 @@ services:
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
       MAILPIT_BASE_URL: http://mailpit:8025
-      SMTP_HOST: mailpit
-      SMTP_PORT: 1025
-      INVITE_FROM_ADDRESS: ${INVITE_FROM_ADDRESS:-jobs@sift.local}
-      APPLY_TO_ADDRESS: ${APPLY_TO_ADDRESS:-careers@sift.local}
       CV_STORAGE_DIR: /data/cvs
       MAIL_POLL_SECONDS: ${MAIL_POLL_SECONDS:-20}
     ports:
@@ -84,10 +83,22 @@ services:
         condition: service_healthy
       mailpit:
         condition: service_started
+      mcp:
+        condition: service_started
+
+  mcp:
+    build: ./backend
+    command: python -m app.mcp_jobs
+    env_file:
+      - ./backend/.env
+    ports:
+      - "8081:8080"
 
   worker:
     build: ./backend
     command: python -m app.worker
+    env_file:
+      - ./backend/.env
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-sift}:${POSTGRES_PASSWORD:-sift}@postgres:5432/${POSTGRES_DB:-sift}
       REDIS_URL: redis://redis:6379/0
@@ -95,15 +106,11 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-4-6}
-      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.1-pro-preview}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash-lite}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2}
       EMBEDDING_BACKEND: ${EMBEDDING_BACKEND:-hashing}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
       MAILPIT_BASE_URL: http://mailpit:8025
-      SMTP_HOST: mailpit
-      SMTP_PORT: 1025
-      INVITE_FROM_ADDRESS: ${INVITE_FROM_ADDRESS:-jobs@sift.local}
-      APPLY_TO_ADDRESS: ${APPLY_TO_ADDRESS:-careers@sift.local}
       CV_STORAGE_DIR: /data/cvs
       PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://localhost:3000}
       COMPANY_NAME: ${COMPANY_NAME:-Sift}
