@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 
 from app.core.config import Settings
@@ -98,6 +100,32 @@ async def test_all_tiers_fail_raises_single_error() -> None:
 def test_create_fallback_manager_wires_three_tiers() -> None:
     manager = create_fallback_manager(Settings(_env_file=None))
     assert manager.tiers == (LLMTier.CLAUDE, LLMTier.GEMINI, LLMTier.OLLAMA)
+
+
+@pytest.mark.asyncio
+async def test_gemini_retries_overloaded_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Models:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def generate_content(self, **_kwargs: object) -> SimpleNamespace:
+            self.calls += 1
+            if self.calls == 1:
+                error = type("ServerError", (Exception,), {})("busy")
+                error.code = 503
+                raise error
+            return SimpleNamespace(text="ok")
+
+    models = Models()
+    provider = GeminiProvider(api_key="test-gemini", model="gemini-3.8-flash")
+    provider._client = SimpleNamespace(aio=SimpleNamespace(models=models))
+
+    async def _no_wait(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr("app.core.llm_fallback.asyncio.sleep", _no_wait)
+    assert await provider.complete("hello") == "ok"
+    assert models.calls == 2
 
 
 @pytest.mark.asyncio

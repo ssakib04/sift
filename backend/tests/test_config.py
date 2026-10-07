@@ -32,10 +32,12 @@ def test_settings_default_to_phase1_models(monkeypatch: pytest.MonkeyPatch) -> N
     assert settings.redis_url == "redis://localhost:6379/0"
     assert settings.ollama_base_url == "http://localhost:11434"
     assert settings.anthropic_model == "claude-sonnet-4-6"
-    assert settings.gemini_model == "gemini-3.1-pro-preview"
+    assert settings.gemini_model == "gemini-3.5-flash-lite"
     assert settings.ollama_model == "llama3.2"
     assert settings.anthropic_api_key == ""
     assert settings.gemini_api_key == ""
+    assert settings.apply_to_address == "fizoadverts@gmail.com"
+    assert settings.imap_password == ""
 
 
 def test_settings_read_environment(monkeypatch: pytest.MonkeyPatch) -> None:

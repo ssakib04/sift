@@ -1,6 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -27,13 +28,14 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     ollama_base_url: str = "http://localhost:11434"
     anthropic_model: str = "claude-sonnet-4-6"
-    gemini_model: str = "gemini-3.1-pro-preview"
+    gemini_model: str = "gemini-3.5-flash-lite"
     ollama_model: str = "llama3.2"
     policy_storage_dir: str = "data/policies"
     postajob_api_key: str = ""
     postajob_base_url: str = "https://api.postajob.io/v1"
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
+    mcp_server_url: str = ""
     public_app_url: str = "http://localhost:3000"
     company_name: str = "Sift"
     company_country: str = "Bangladesh"
@@ -43,10 +45,22 @@ class Settings(BaseSettings):
     mailpit_base_url: str = "http://localhost:8025"
     smtp_host: str = "localhost"
     smtp_port: int = 1025
+    smtp_username: str = ""
+    smtp_password: str = ""
     invite_from_address: str = "jobs@sift.local"
-    apply_to_address: str = "careers@sift.local"
+    apply_to_address: str = "fizoadverts@gmail.com"
+    imap_host: str = "imap.gmail.com"
+    imap_port: int = 993
+    imap_username: str = ""
+    imap_password: str = ""
     cv_storage_dir: str = "data/cvs"
     mail_poll_seconds: int = 20
+
+    @field_validator("imap_password", "smtp_password")
+    @classmethod
+    def _compact_app_password(cls, value: str) -> str:
+        """Gmail shows app passwords in groups of four. IMAP and SMTP reject the spaces."""
+        return value.replace(" ", "").strip()
 
 
 @lru_cache

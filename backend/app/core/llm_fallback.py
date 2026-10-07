@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from collections.abc import Sequence
 from enum import Enum
@@ -112,10 +113,20 @@ class AnthropicProvider:
         return "".join(parts)
 
 
+def _retryable_gemini_error(exc: Exception) -> bool:
+    code = getattr(exc, "code", None)
+    if code is None:
+        code = getattr(exc, "status_code", None)
+    if code in {429, 500, 503}:
+        return True
+    return type(exc).__name__ == "ServerError"
+
+
 class GeminiProvider:
-    def __init__(self, *, api_key: str, model: str) -> None:
+    def __init__(self, *, api_key: str, model: str, attempts: int = 3) -> None:
         self._api_key = api_key
         self._model = model
+        self._attempts = attempts
         self._client: Any = None
 
     async def complete(self, prompt: str, *, system: str | None = None) -> str:
@@ -130,19 +141,31 @@ class GeminiProvider:
             from google.genai import types
 
             config = types.GenerateContentConfig(system_instruction=system)
-        response = await self._client.aio.models.generate_content(
-            model=self._model,
-            contents=prompt,
-            config=config,
-        )
-        text = getattr(response, "text", None)
-        if not isinstance(text, str) or not text:
-            raise LLMProviderError("Gemini returned no text content")
-        return text
+        last_error: Exception | None = None
+        for attempt in range(self._attempts):
+            try:
+                response = await self._client.aio.models.generate_content(
+                    model=self._model,
+                    contents=prompt,
+                    config=config,
+                )
+            except Exception as exc:
+                last_error = exc
+                if attempt + 1 >= self._attempts or not _retryable_gemini_error(exc):
+                    raise
+                await asyncio.sleep(1.5 * (attempt + 1))
+                continue
+            text = getattr(response, "text", None)
+            if not isinstance(text, str) or not text:
+                raise LLMProviderError("Gemini returned no text content")
+            return text
+        if last_error is not None:
+            raise last_error
+        raise LLMProviderError("Gemini returned no text content")
 
 
 class OllamaProvider:
-    def __init__(self, *, base_url: str, model: str, timeout_seconds: float = 60.0) -> None:
+    def __init__(self, *, base_url: str, model: str, timeout_seconds: float = 180.0) -> None:
         self._base_url = base_url.rstrip("/")
         self._model = model
         self._timeout = timeout_seconds
