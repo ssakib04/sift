@@ -50,6 +50,15 @@ export type CandidateRecord = {
   parse_method: string;
   invited: boolean;
   evaluations: CandidateEvaluation[];
+  job_id: string | null;
+  job_title: string;
+};
+
+export type CandidateGroup = {
+  job_id: string;
+  job_title: string;
+  mail_subject: string;
+  candidates: CandidateRecord[];
 };
 
 export type InviteRecord = {
