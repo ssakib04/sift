@@ -20,8 +20,21 @@ class SmtpInviteSender:
         message["To"] = to_address
         message["Subject"] = subject
         message.set_content(body)
-        with smtplib.SMTP(self._settings.smtp_host, self._settings.smtp_port, timeout=15) as client:
+        username, password = _smtp_credentials(self._settings)
+        with smtplib.SMTP(self._settings.smtp_host, self._settings.smtp_port, timeout=20) as client:
+            if username and password:
+                client.ehlo()
+                client.starttls()
+                client.ehlo()
+                client.login(username, password)
             client.send_message(message)
+
+
+def _smtp_credentials(settings: Settings) -> tuple[str, str]:
+    """Use SMTP login when set, otherwise the same mailbox that receives CVs."""
+    username = settings.smtp_username.strip() or settings.imap_username.strip()
+    password = settings.smtp_password.strip() or settings.imap_password.strip()
+    return username, password
 
 
 def invitation_body(*, job_title: str, company_name: str, url: str) -> str:

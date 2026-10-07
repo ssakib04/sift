@@ -27,7 +27,7 @@ from app.models.candidate import (
     ScoreSnapshot,
 )
 from app.models.job import JobChecklistQuery, JobVersion
-from app.schemas.screening import CandidateRead, InviteRead, QueryEvaluationRead
+from app.schemas.screening import CandidateGroupRead, CandidateRead, InviteRead, QueryEvaluationRead
 from app.services.embeddings import Embedder
 from app.services.invites import InviteSender, invitation_body
 from app.services.ranking import RankInput, invite_ids, rank_candidates
@@ -41,6 +41,7 @@ class JobMailKey:
     mail_subject: str
     version_id: uuid.UUID
     title: str
+    locked_at: datetime
 
 
 async def load_mail_keys(session: AsyncSession) -> list[JobMailKey]:
@@ -66,6 +67,7 @@ async def load_mail_keys(session: AsyncSession) -> list[JobMailKey]:
                 mail_subject=job.mail_subject,
                 version_id=version.id,
                 title=job.title,
+                locked_at=version.locked_at or version.created_at,
             )
         )
     return keys
@@ -239,7 +241,49 @@ async def list_ranked_candidates(session: AsyncSession, job_id: uuid.UUID) -> li
     )
     candidates = list((await session.scalars(statement)).unique().all())
     candidates.sort(key=lambda candidate: (candidate.snapshot.rank if candidate.snapshot and candidate.snapshot.rank else 10_000, candidate.created_at))
-    return [_to_candidate_read(candidate) for candidate in candidates]
+    return [
+        _to_candidate_read(candidate, job_id=keys[0].job_id, job_title=keys[0].title) for candidate in candidates
+    ]
+
+
+async def list_candidate_groups(session: AsyncSession) -> list[CandidateGroupRead]:
+    groups: list[CandidateGroupRead] = []
+    for key in await load_mail_keys(session):
+        candidates = await list_ranked_candidates(session, key.job_id)
+        if not candidates:
+            continue
+        groups.append(
+            CandidateGroupRead(
+                job_id=key.job_id,
+                job_title=key.title,
+                mail_subject=key.mail_subject,
+                candidates=candidates,
+            )
+        )
+    groups.sort(key=lambda group: group.job_title.casefold())
+    return groups
+
+
+async def get_candidate(session: AsyncSession, candidate_id: uuid.UUID) -> CandidateRead | None:
+    statement = (
+        select(Candidate)
+        .where(Candidate.id == candidate_id)
+        .options(
+            selectinload(Candidate.parse_result),
+            selectinload(Candidate.snapshot).selectinload(ScoreSnapshot.evaluations),
+            selectinload(Candidate.magic_link),
+            selectinload(Candidate.version).selectinload(JobVersion.job),
+        )
+    )
+    candidate = await session.scalar(statement)
+    if candidate is None:
+        return None
+    job = candidate.version.job if candidate.version is not None else None
+    return _to_candidate_read(
+        candidate,
+        job_id=job.id if job is not None else None,
+        job_title=job.title if job is not None else "",
+    )
 
 
 async def resolve_invite(session: AsyncSession, token: str, settings: Settings) -> InviteRead | None:
@@ -376,7 +420,12 @@ def _query_payload(query: JobChecklistQuery) -> dict[str, object]:
     }
 
 
-def _to_candidate_read(candidate: Candidate) -> CandidateRead:
+def _to_candidate_read(
+    candidate: Candidate,
+    *,
+    job_id: uuid.UUID | None = None,
+    job_title: str = "",
+) -> CandidateRead:
     snapshot = candidate.snapshot
     parse_result = candidate.parse_result
     evaluations = []
@@ -404,4 +453,6 @@ def _to_candidate_read(candidate: Candidate) -> CandidateRead:
         fairness_flags=list(snapshot.fairness_flags) if snapshot is not None else [],
         justifications=list(snapshot.justifications) if snapshot is not None else [],
         evaluations=evaluations,
+        job_id=job_id,
+        job_title=job_title,
     )

@@ -30,9 +30,7 @@ def match_job(subject: str, jobs: Sequence[JobMailKey]) -> JobMailKey | None:
         return None
     best_length = max(len(job.mail_subject) for job in matches)
     best = [job for job in matches if len(job.mail_subject) == best_length]
-    if len(best) == 1:
-        return best[0]
-    return None
+    return max(best, key=lambda job: (job.locked_at, str(job.job_id)))
 
 
 async def ingest_inbox(
