@@ -237,6 +237,7 @@ async def list_ranked_candidates(session: AsyncSession, job_id: uuid.UUID) -> li
             selectinload(Candidate.parse_result),
             selectinload(Candidate.snapshot).selectinload(ScoreSnapshot.evaluations),
             selectinload(Candidate.magic_link),
+            selectinload(Candidate.version).selectinload(JobVersion.queries),
         )
     )
     candidates = list((await session.scalars(statement)).unique().all())
@@ -273,6 +274,7 @@ async def get_candidate(session: AsyncSession, candidate_id: uuid.UUID) -> Candi
             selectinload(Candidate.snapshot).selectinload(ScoreSnapshot.evaluations),
             selectinload(Candidate.magic_link),
             selectinload(Candidate.version).selectinload(JobVersion.job),
+            selectinload(Candidate.version).selectinload(JobVersion.queries),
         )
     )
     candidate = await session.scalar(statement)
@@ -428,11 +430,16 @@ def _to_candidate_read(
 ) -> CandidateRead:
     snapshot = candidate.snapshot
     parse_result = candidate.parse_result
+    questions = {
+        query.query_id: query.question
+        for query in (candidate.version.queries if candidate.version is not None else [])
+    }
     evaluations = []
     if snapshot is not None:
         evaluations = [
             QueryEvaluationRead(
                 query_id=item.query_id,
+                question=questions.get(item.query_id, ""),
                 status=item.status,
                 confidence=item.confidence,
                 evidence=item.evidence,

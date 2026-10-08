@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 class QueryEvaluationRead(BaseModel):
     query_id: str
+    question: str = ""
     status: str
     confidence: float
     evidence: str
