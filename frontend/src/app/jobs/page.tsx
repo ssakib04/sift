@@ -19,12 +19,27 @@ type DraftQuery = ChecklistQuery;
 
 function JobsPageContent() {
   const [job, setJob] = useState<JobRecord | null>(null);
+  const [jobs, setJobs] = useState<JobRecord[]>([]);
   const [description, setDescription] = useState("");
   const [queries, setQueries] = useState<DraftQuery[]>([]);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [candidates, setCandidates] = useState<CandidateRecord[]>([]);
   const requestedJobId = useSearchParams().get("job");
+
+  useEffect(() => {
+    let cancelled = false;
+    apiRequest<JobRecord[]>("/api/v1/jobs")
+      .then((records) => {
+        if (!cancelled) setJobs(records);
+      })
+      .catch(() => {
+        if (!cancelled) setJobs([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [job?.id]);
 
   useEffect(() => {
     if (!requestedJobId) return;
@@ -51,6 +66,7 @@ function JobsPageContent() {
     setJob(record);
     setDescription(latest?.description ?? "");
     setQueries(latest?.queries ?? []);
+    window.history.replaceState(null, "", `/jobs?job=${record.id}`);
   }
 
   async function onCreate(event: FormEvent<HTMLFormElement>) {
@@ -160,12 +176,13 @@ function JobsPageContent() {
   }
 
   async function checkInbox() {
-    if (!job) return;
     setBusy(true);
     setMessage("");
     try {
       const result = await apiRequest<{ processed: number }>("/api/v1/screening/poll", { method: "POST" });
-      await loadCandidates(job.id);
+      if (job) {
+        await loadCandidates(job.id);
+      }
       setMessage(`Inbox checked. ${result.processed} new CV${result.processed === 1 ? "" : "s"} scored.`);
     } catch (error) {
       setMessage(error instanceof ApiError ? error.message : "Could not read the inbox.");
@@ -204,6 +221,56 @@ function JobsPageContent() {
           <p className="text-sm uppercase tracking-[0.2em] text-slate-400">Jobs</p>
           <h1 className="text-3xl font-semibold">Create a locked job profile</h1>
         </header>
+        <section className="space-y-3 rounded-xl border border-emerald-800/60 bg-slate-900 p-5">
+          <h2 className="text-lg font-medium">Gmail inbox</h2>
+          <p className="text-sm text-slate-400">
+            Pull unread CV emails from the shared apply mailbox, match them to locked jobs, and score them.
+          </p>
+          <button
+            type="button"
+            onClick={checkInbox}
+            disabled={busy}
+            className="rounded-md bg-white px-4 py-2 text-sm font-medium text-slate-950 disabled:opacity-60"
+          >
+            {busy ? "Checking inbox..." : "Check inbox"}
+          </button>
+        </section>
+        <section className="space-y-3 rounded-xl border border-slate-800 bg-slate-900 p-5">
+          <h2 className="text-lg font-medium">Open an existing job</h2>
+          <p className="text-sm text-slate-400">
+            Open a locked job to review applicants after checking the inbox.
+          </p>
+          {jobs.length === 0 ? (
+            <p className="text-sm text-slate-500">No jobs yet. Generate a draft below, then approve it.</p>
+          ) : (
+            <ul className="space-y-2">
+              {jobs.map((record) => {
+                const version = record.versions[record.versions.length - 1];
+                const isOpen = job?.id === record.id;
+                return (
+                  <li key={record.id}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        applyJob(record);
+                        setMessage(`Opened ${record.title}.`);
+                      }}
+                      className={`w-full rounded-md border px-4 py-3 text-left text-sm ${
+                        isOpen ? "border-white bg-slate-800" : "border-slate-800 hover:border-slate-600"
+                      }`}
+                    >
+                      <span className="font-medium">{record.title}</span>
+                      <span className="mt-1 block text-slate-400">
+                        v{version?.version_number ?? "?"} · {version?.status ?? "unknown"}
+                        {version?.status === "locked" ? " · applicants available" : ""}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </section>
         <form onSubmit={onCreate} className="grid gap-4 rounded-xl border border-slate-800 bg-slate-900 p-5">
           <label className="grid gap-1 text-sm">
             Title
