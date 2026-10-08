@@ -46,10 +46,11 @@ export default function CandidateProfilePage() {
               <h2 className="text-lg font-medium">Checklist</h2>
               <ul className="space-y-2">
                 {candidate.evaluations.map((item) => (
-                  <li key={item.query_id} className="rounded-xl border border-slate-800 px-4 py-3 text-sm">
-                    <p>
+                  <li key={item.query_id} className="rounded-xl border border-slate-800 px-4 py-3 text-sm space-y-1">
+                    <p className="font-medium">
                       {item.query_id} · {item.status.replaceAll("_", " ")}
                     </p>
+                    {item.question ? <p className="text-slate-200">{item.question}</p> : null}
                     {item.evidence ? <p className="text-slate-400">{item.evidence}</p> : null}
                   </li>
                 ))}

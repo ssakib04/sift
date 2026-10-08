@@ -34,6 +34,7 @@ export type JobRecord = {
 
 export type CandidateEvaluation = {
   query_id: string;
+  question: string;
   status: string;
   confidence: number;
   evidence: string;
