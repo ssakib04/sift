@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     public_app_url: str = "http://localhost:3000"
     company_name: str = "Sift"
     company_country: str = "Bangladesh"
-    embedding_backend: str = "hashing"
+    embedding_backend: str = "minilm"
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     cors_origins: str = "http://localhost:3000"
     mailpit_base_url: str = "http://localhost:8025"

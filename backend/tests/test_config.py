@@ -11,6 +11,7 @@ _SETTING_ENV_VARS = (
     "ANTHROPIC_MODEL",
     "GEMINI_MODEL",
     "OLLAMA_MODEL",
+    "EMBEDDING_BACKEND",
 )
 
 
@@ -38,6 +39,7 @@ def test_settings_default_to_phase1_models(monkeypatch: pytest.MonkeyPatch) -> N
     assert settings.gemini_api_key == ""
     assert settings.apply_to_address == "fizoadverts@gmail.com"
     assert settings.imap_password == ""
+    assert settings.embedding_backend == "minilm"
 
 
 def test_settings_read_environment(monkeypatch: pytest.MonkeyPatch) -> None:

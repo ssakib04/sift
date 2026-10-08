@@ -80,6 +80,14 @@ class FallbackLLMManager:
             return LLMResponse(content=content, tier=tier, fallback_used=index > 0)
         raise LLMFallbackExhaustedError(failures)
 
+    async def complete_local(self, prompt: str, *, system: str | None = None) -> LLMResponse:
+        """Ask only the local Ollama model, without trying Claude or Gemini."""
+        tier, provider = self._providers[-1]
+        if tier is not LLMTier.OLLAMA:
+            raise LLMProviderError("Local model is not configured")
+        content = await provider.complete(prompt, system=system)
+        return LLMResponse(content=content, tier=LLMTier.OLLAMA, fallback_used=False)
+
 
 class AnthropicProvider:
     def __init__(self, *, api_key: str, model: str, max_tokens: int = 4096) -> None:

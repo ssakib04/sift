@@ -97,6 +97,21 @@ async def test_all_tiers_fail_raises_single_error() -> None:
     assert len(claude.calls) == len(gemini.calls) == len(ollama.calls) == 1
 
 
+@pytest.mark.asyncio
+async def test_complete_local_skips_cloud_tiers() -> None:
+    claude = StubProvider(content="from claude")
+    gemini = StubProvider(content="from gemini")
+    ollama = StubProvider(content="from ollama")
+    result = await _manager(claude, gemini, ollama).complete_local("does FastAPI imply Python")
+
+    assert result.content == "from ollama"
+    assert result.tier is LLMTier.OLLAMA
+    assert result.fallback_used is False
+    assert claude.calls == []
+    assert gemini.calls == []
+    assert len(ollama.calls) == 1
+
+
 def test_create_fallback_manager_wires_three_tiers() -> None:
     manager = create_fallback_manager(Settings(_env_file=None))
     assert manager.tiers == (LLMTier.CLAUDE, LLMTier.GEMINI, LLMTier.OLLAMA)

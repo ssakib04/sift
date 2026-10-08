@@ -65,7 +65,7 @@ services:
       PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://localhost:3000}
       COMPANY_NAME: ${COMPANY_NAME:-Sift}
       COMPANY_COUNTRY: ${COMPANY_COUNTRY:-Bangladesh}
-      EMBEDDING_BACKEND: ${EMBEDDING_BACKEND:-hashing}
+      EMBEDDING_BACKEND: ${EMBEDDING_BACKEND:-minilm}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
       MAILPIT_BASE_URL: http://mailpit:8025
@@ -108,7 +108,7 @@ services:
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-4-6}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash-lite}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2}
-      EMBEDDING_BACKEND: ${EMBEDDING_BACKEND:-hashing}
+      EMBEDDING_BACKEND: ${EMBEDDING_BACKEND:-minilm}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
       MAILPIT_BASE_URL: http://mailpit:8025
       CV_STORAGE_DIR: /data/cvs
