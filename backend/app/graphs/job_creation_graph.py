@@ -1,5 +1,6 @@
 import json
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Protocol
 
 from langgraph.graph import END, START, StateGraph
@@ -123,12 +124,21 @@ def build_job_creation_graph(
     graph.add_edge("generate_scoring_weights", "validate_schema")
     graph.add_edge("validate_schema", END)
     compiled = graph.compile()
+    _save_graph_png(compiled, "job-creation-graph.png")
 
     async def run(state: JobCreationState) -> JobCreationState:
         result = await compiled.ainvoke(state)
         return result
 
     return run
+
+
+def _save_graph_png(compiled: object, filename: str) -> None:
+    destination = Path(__file__).with_name(filename)
+    try:
+        compiled.get_graph().draw_mermaid_png(output_file_path=str(destination))  # type: ignore[attr-defined]
+    except Exception:
+        return
 
 
 def state_from_request(request: JobCreateRequest) -> JobCreationState:

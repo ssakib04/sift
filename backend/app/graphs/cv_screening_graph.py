@@ -5,7 +5,7 @@ from collections.abc import Awaitable, Callable
 from langgraph.graph import END, START, StateGraph
 
 from app.core.llm_fallback import FallbackLLMManager
-from app.graphs.job_creation_graph import parse_json_object
+from app.graphs.job_creation_graph import _save_graph_png, parse_json_object
 from app.graphs.state import CVScreeningState
 from app.services.cv_facts import (
     coerce_work_history,
@@ -288,6 +288,7 @@ def build_cv_screening_graph(
     graph.add_edge("fairness_guard", "generate_justifications")
     graph.add_edge("generate_justifications", END)
     compiled = graph.compile()
+    _save_graph_png(compiled, "cv-screening-graph.png")
 
     async def run(state: CVScreeningState) -> CVScreeningState:
         return await compiled.ainvoke(state)
