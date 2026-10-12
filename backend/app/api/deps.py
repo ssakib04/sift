@@ -1,3 +1,4 @@
+from app.api.v1.auth import require_recruiter
 from app.core.config import Settings, get_settings
 from app.core.llm_fallback import FallbackLLMManager, create_fallback_manager
 from app.services.embeddings import Embedder, create_embedder

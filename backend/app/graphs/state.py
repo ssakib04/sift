@@ -1,4 +1,5 @@
-from typing import TypedDict
+import operator
+from typing import Annotated, TypedDict
 
 from app.schemas.job import ChecklistQuery
 
@@ -42,3 +43,18 @@ class JobCreationState(TypedDict, total=False):
     queries: list[ChecklistQuery]
     llm_tier: str
     fallback_used: bool
+
+
+class QAAnalysisState(TypedDict, total=False):
+    transcript: str
+    checklist: list[str]
+    relevance: float
+    technical_accuracy: float
+    completeness: float
+    articulation: float
+    gaps: list[str]
+    summary: str
+    llm_tier: str
+    fallback_used: bool
+    tier_notes: Annotated[list[str], operator.add]
+    fallback_flags: Annotated[list[bool], operator.add]

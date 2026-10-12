@@ -23,7 +23,12 @@ export function PersistentChatbot() {
     },
   ]);
 
-  if (pathname === "/login" || pathname.startsWith("/login/")) {
+  if (
+    pathname === "/login" ||
+    pathname.startsWith("/login/") ||
+    pathname.startsWith("/invite/") ||
+    pathname.startsWith("/interview/")
+  ) {
     return null;
   }
 

@@ -6,10 +6,12 @@ from app.models.candidate import (
     CandidateDocument,
     CandidateParseResult,
     IntakeMessage,
+    InterviewAnalysis,
     InterviewSession,
     MagicLink,
     QueryEvaluation,
     ScoreSnapshot,
+    TranscriptSegment,
 )
 from app.models.job import Job, JobChecklistQuery, JobPosting, JobVersion
 from app.models.policy import PolicyChunk, PolicyDocument
@@ -20,6 +22,7 @@ __all__ = [
     "CandidateDocument",
     "CandidateParseResult",
     "IntakeMessage",
+    "InterviewAnalysis",
     "InterviewSession",
     "Job",
     "JobChecklistQuery",
@@ -30,4 +33,5 @@ __all__ = [
     "PolicyDocument",
     "QueryEvaluation",
     "ScoreSnapshot",
+    "TranscriptSegment",
 ]

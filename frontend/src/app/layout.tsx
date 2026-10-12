@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 
 import { PersistentChatbot } from "@/components/persistent-chatbot";
+import { RecruiterGate } from "@/components/recruiter-gate";
 
 import "./globals.css";
 
@@ -14,7 +15,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
       <body>
-        {children}
+        <RecruiterGate>{children}</RecruiterGate>
         <PersistentChatbot />
       </body>
     </html>

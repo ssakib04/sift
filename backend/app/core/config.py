@@ -55,6 +55,20 @@ class Settings(BaseSettings):
     imap_password: str = ""
     cv_storage_dir: str = "data/cvs"
     mail_poll_seconds: int = 20
+    jwt_secret: str = "sift-dev-change-me-before-any-real-interview"
+    jwt_ttl_minutes: int = 240
+    stun_urls: str = "stun:stun.l.google.com:19302"
+    turn_url: str = ""
+    turn_username: str = ""
+    turn_password: str = ""
+    livekit_url: str = ""
+    livekit_api_key: str = ""
+    livekit_api_secret: str = ""
+    whisper_model: str = "tiny"
+    whisper_device: str = "cpu"
+    whisper_compute_type: str = "int8"
+    recruiter_password: str = ""
+    api_docs_enabled: bool = False
 
     @field_validator("imap_password", "smtp_password")
     @classmethod

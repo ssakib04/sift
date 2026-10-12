@@ -15,8 +15,15 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await engine.dispose()
 
 
-app = FastAPI(title="Sift", version="0.1.0", lifespan=lifespan)
 _settings = get_settings()
+app = FastAPI(
+    title="Sift",
+    version="0.1.0",
+    lifespan=lifespan,
+    docs_url="/docs" if _settings.api_docs_enabled else None,
+    redoc_url="/redoc" if _settings.api_docs_enabled else None,
+    openapi_url="/openapi.json" if _settings.api_docs_enabled else None,
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[origin.strip() for origin in _settings.cors_origins.split(",") if origin.strip()],

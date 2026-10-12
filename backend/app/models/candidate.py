@@ -162,8 +162,66 @@ class InterviewSession(Base):
     job_version_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
     status: Mapped[str] = mapped_column(String(32))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    consented_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    processing_status: Mapped[str] = mapped_column(String(32), default="", server_default="")
+    copilot_explored: Mapped[list[str]] = mapped_column(JSON, default=list)
+    copilot_gaps: Mapped[list[str]] = mapped_column(JSON, default=list)
+    copilot_question: Mapped[str] = mapped_column(Text, default="", server_default="")
+    copilot_turn_count: Mapped[int] = mapped_column(Integer, default=-1, server_default="-1")
 
     candidate: Mapped[Candidate] = relationship(back_populates="interview_session")
+    transcript_segments: Mapped[list["TranscriptSegment"]] = relationship(
+        back_populates="session",
+        cascade="all, delete-orphan",
+    )
+    analysis: Mapped["InterviewAnalysis | None"] = relationship(
+        back_populates="session",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+
+
+class TranscriptSegment(Base):
+    __tablename__ = "transcript_segments"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("interview_sessions.id", ondelete="CASCADE"),
+        index=True,
+    )
+    speaker: Mapped[str] = mapped_column(String(32))
+    start_time: Mapped[float] = mapped_column(Float)
+    end_time: Mapped[float] = mapped_column(Float)
+    text: Mapped[str] = mapped_column(Text)
+    confidence: Mapped[float] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    session: Mapped[InterviewSession] = relationship(back_populates="transcript_segments")
+
+
+class InterviewAnalysis(Base):
+    __tablename__ = "interview_analyses"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("interview_sessions.id", ondelete="CASCADE"),
+        unique=True,
+    )
+    relevance: Mapped[float] = mapped_column(Float)
+    technical_accuracy: Mapped[float] = mapped_column(Float)
+    completeness: Mapped[float] = mapped_column(Float)
+    articulation: Mapped[float] = mapped_column(Float)
+    gaps: Mapped[list[str]] = mapped_column(JSON)
+    summary: Mapped[str] = mapped_column(Text)
+    llm_tier: Mapped[str] = mapped_column(String(32))
+    fallback_used: Mapped[bool]
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    session: Mapped[InterviewSession] = relationship(back_populates="analysis")
 
 
 class IntakeMessage(Base):

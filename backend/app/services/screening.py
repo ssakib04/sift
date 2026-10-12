@@ -377,6 +377,11 @@ async def _dispatch_invites(
                 job_version_id=version_id,
                 status="invited",
                 created_at=now,
+                processing_status="",
+                copilot_explored=[],
+                copilot_gaps=[],
+                copilot_question="",
+                copilot_turn_count=-1,
             )
         )
         await session.flush()
