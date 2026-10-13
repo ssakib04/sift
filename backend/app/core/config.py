@@ -64,9 +64,6 @@ class Settings(BaseSettings):
     livekit_url: str = ""
     livekit_api_key: str = ""
     livekit_api_secret: str = ""
-    whisper_model: str = "tiny"
-    whisper_device: str = "cpu"
-    whisper_compute_type: str = "int8"
     recruiter_password: str = ""
     api_docs_enabled: bool = False
 

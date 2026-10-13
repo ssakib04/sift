@@ -3,9 +3,6 @@
 import { ConnectionState, Room, RoomEvent, Track } from "livekit-client";
 import { useEffect, useRef, useState } from "react";
 
-import { ChunkBuffer } from "@/components/interview/audio-buffer";
-import { websocketBase } from "@/lib/api";
-
 type VideoRoomProps = {
   sessionId: string;
   token: string;
@@ -15,6 +12,10 @@ type VideoRoomProps = {
   record: boolean;
   onConnection: (state: string) => void;
 };
+
+function isPerson(identity: string): boolean {
+  return identity === "recruiter" || identity === "candidate";
+}
 
 export function VideoRoom({
   sessionId,
@@ -27,24 +28,19 @@ export function VideoRoom({
 }: VideoRoomProps) {
   const localRef = useRef<HTMLVideoElement>(null);
   const remoteRef = useRef<HTMLVideoElement>(null);
-  const recordRef = useRef(record);
   const [muted, setMuted] = useState(false);
   const [cameraOff, setCameraOff] = useState(false);
   const [status, setStatus] = useState("Connecting");
   const [attempt, setAttempt] = useState(0);
   const streamRef = useRef<MediaStream | null>(null);
-
-  recordRef.current = record;
+  void sessionId;
+  void token;
+  void role;
+  void record;
 
   useEffect(() => {
     let cancelled = false;
-    let audio: WebSocket | null = null;
-    let recorder: MediaRecorder | null = null;
-    let context: AudioContext | null = null;
     let room: Room | null = null;
-    const buffer = new ChunkBuffer();
-    const startedAt = performance.now();
-    let lastMark = 0;
 
     function report(next: string) {
       if (!cancelled) {
@@ -56,6 +52,9 @@ export function VideoRoom({
     function paintRemote(current: Room) {
       const media = new MediaStream();
       current.remoteParticipants.forEach((participant) => {
+        if (!isPerson(participant.identity)) {
+          return;
+        }
         participant.trackPublications.forEach((publication) => {
           const track = publication.track?.mediaStreamTrack;
           if (track) {
@@ -75,39 +74,8 @@ export function VideoRoom({
       if (current.state !== ConnectionState.Connected) {
         return "Connecting";
       }
-      if (current.remoteParticipants.size === 0) {
-        return "Waiting for the other person";
-      }
-      return "Connected";
-    }
-
-    async function flushAudio() {
-      if (!audio || audio.readyState !== WebSocket.OPEN) {
-        return;
-      }
-      let chunk = buffer.shift();
-      while (chunk) {
-        if (!recordRef.current) {
-          chunk = buffer.shift();
-          continue;
-        }
-        try {
-          audio.send(
-            JSON.stringify({
-              type: "chunk",
-              speaker: chunk.speaker,
-              start_time: chunk.startTime,
-              end_time: chunk.endTime,
-            }),
-          );
-          audio.send(chunk.data);
-          await buffer.remove(chunk.id);
-        } catch {
-          buffer.unshift(chunk);
-          return;
-        }
-        chunk = buffer.shift();
-      }
+      const people = [...current.remoteParticipants.values()].filter((participant) => isPerson(participant.identity));
+      return people.length === 0 ? "Waiting for the other person" : "Connected";
     }
 
     async function start() {
@@ -132,40 +100,6 @@ export function VideoRoom({
         if (localRef.current) {
           localRef.current.srcObject = stream;
         }
-        context = new AudioContext();
-        void context.resume();
-        const source = context.createMediaStreamSource(stream);
-        const splitter = context.createChannelSplitter(2);
-        const merger = context.createChannelMerger(1);
-        const destination = context.createMediaStreamDestination();
-        source.connect(splitter);
-        splitter.connect(merger, 0, 0);
-        merger.connect(destination);
-        const mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : undefined;
-        recorder = new MediaRecorder(destination.stream, mimeType ? { mimeType } : undefined);
-        recorder.ondataavailable = (event) => {
-          if (!event.data.size || !recordRef.current) {
-            return;
-          }
-          const now = (performance.now() - startedAt) / 1000;
-          const startTime = lastMark;
-          lastMark = now;
-          void event.data.arrayBuffer().then(async (data) => {
-            await buffer.add({ speaker: role, startTime, endTime: now, data });
-            await flushAudio();
-          });
-        };
-        recorder.start(5000);
-      } catch {
-        report("The camera or microphone could not be opened.");
-        return;
-      }
-
-      try {
-        const stream = streamRef.current;
-        if (!stream) {
-          return;
-        }
         const connection = new Room({ adaptiveStream: true, dynacast: true });
         room = connection;
         connection.on(RoomEvent.ConnectionStateChanged, () => report(describe(connection)));
@@ -173,11 +107,17 @@ export function VideoRoom({
         connection.on(RoomEvent.ParticipantDisconnected, () => report(describe(connection)));
         connection.on(RoomEvent.TrackSubscribed, () => paintRemote(connection));
         connection.on(RoomEvent.TrackUnsubscribed, () => paintRemote(connection));
-        await connection.connect(livekitUrl, livekitToken);
-        for (const track of stream.getTracks()) {
-          await connection.localParticipant.publishTrack(track, {
-            source: track.kind === "video" ? Track.Source.Camera : Track.Source.Microphone,
-            videoEncoding: track.kind === "video" ? { maxBitrate: 1_700_000, maxFramerate: 30 } : undefined,
+        try {
+          await connection.connect(livekitUrl, livekitToken);
+        } catch {
+          stream.getTracks().forEach((mediaTrack) => mediaTrack.stop());
+          report("The video service could not be reached.");
+          return;
+        }
+        for (const mediaTrack of stream.getTracks()) {
+          await connection.localParticipant.publishTrack(mediaTrack, {
+            source: mediaTrack.kind === "video" ? Track.Source.Camera : Track.Source.Microphone,
+            videoEncoding: mediaTrack.kind === "video" ? { maxBitrate: 1_700_000, maxFramerate: 30 } : undefined,
           });
         }
         if (!cancelled) {
@@ -185,66 +125,32 @@ export function VideoRoom({
           report(describe(connection));
         }
       } catch {
-        report("The video service could not be reached.");
-        return;
+        report("The camera or microphone could not be opened.");
       }
-
-      await buffer.open();
-
-      function connectAudio() {
-        const socket = new WebSocket(`${websocketBase()}/api/v1/interview-sessions/${sessionId}/audio`);
-        audio = socket;
-        socket.onopen = () => {
-          socket.send(JSON.stringify({ type: "auth", token }));
-          void flushAudio();
-        };
-        socket.onclose = () => {
-          if (cancelled) {
-            return;
-          }
-          window.setTimeout(() => {
-            if (!cancelled) {
-              connectAudio();
-            }
-          }, 2000);
-        };
-      }
-
-      connectAudio();
     }
 
     void start();
-    const flushTimer = window.setInterval(() => {
-      void flushAudio();
-    }, 2000);
-
     return () => {
       cancelled = true;
-      window.clearInterval(flushTimer);
-      if (recorder && recorder.state !== "inactive") {
-        recorder.stop();
-      }
-      void context?.close();
-      audio?.close();
       void room?.disconnect();
-      streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current?.getTracks().forEach((mediaTrack) => mediaTrack.stop());
       streamRef.current = null;
     };
-  }, [attempt, livekitToken, livekitUrl, onConnection, role, sessionId, token]);
+  }, [attempt, livekitToken, livekitUrl, onConnection]);
 
   function toggleMute() {
     const next = !muted;
     setMuted(next);
-    streamRef.current?.getAudioTracks().forEach((track) => {
-      track.enabled = !next;
+    streamRef.current?.getAudioTracks().forEach((mediaTrack) => {
+      mediaTrack.enabled = !next;
     });
   }
 
   function toggleCamera() {
     const next = !cameraOff;
     setCameraOff(next);
-    streamRef.current?.getVideoTracks().forEach((track) => {
-      track.enabled = !next;
+    streamRef.current?.getVideoTracks().forEach((mediaTrack) => {
+      mediaTrack.enabled = !next;
     });
   }
 

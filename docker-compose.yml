@@ -77,8 +77,6 @@ services:
       TURN_URL: ${TURN_URL:-turn:localhost:3478}
       TURN_USERNAME: ${TURN_USERNAME:-sift}
       TURN_PASSWORD: ${TURN_PASSWORD:-sift-turn}
-      WHISPER_MODEL: ${WHISPER_MODEL:-tiny}
-      HF_HOME: /data/whisper
       RECRUITER_PASSWORD: ${RECRUITER_PASSWORD:-}
       API_DOCS_ENABLED: ${API_DOCS_ENABLED:-false}
       LIVEKIT_URL: ${LIVEKIT_URL:-}
@@ -89,7 +87,6 @@ services:
     volumes:
       - policy_data:/data/policies
       - cv_data:/data/cvs
-      - whisper_data:/data/whisper
     depends_on:
       postgres:
         condition: service_healthy
@@ -139,6 +136,20 @@ services:
       mailpit:
         condition: service_started
 
+  transcriber:
+    build: ./backend
+    command: python -m app.transcribe_worker start
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-sift}:${POSTGRES_PASSWORD:-sift}@postgres:5432/${POSTGRES_DB:-sift}
+      LIVEKIT_URL: ${LIVEKIT_URL:-}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   coturn:
     image: coturn/coturn:4.6.2
     ports:
@@ -161,7 +172,7 @@ services:
     build:
       context: ./frontend
       args:
-        NEXT_PUBLIC_API_URL: http://localhost:8000
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
     ports:
       - "127.0.0.1:3000:3000"
     depends_on:
@@ -173,4 +184,3 @@ volumes:
   ollama_data:
   policy_data:
   cv_data:
-  whisper_data:
