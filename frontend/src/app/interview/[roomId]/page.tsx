@@ -8,6 +8,7 @@ import { InCallCopilot } from "@/components/interview/in-call-copilot";
 import { LiveTranscript } from "@/components/interview/live-transcript";
 import { VideoRoom } from "@/components/interview/video-room";
 import {
+  CopilotAnswer,
   InterviewAnalysis,
   InterviewCopilot,
   InterviewDetail,
@@ -15,6 +16,7 @@ import {
   apiRequest,
   bearer,
   recallInterview,
+  recallPracticeLink,
 } from "@/lib/api";
 
 export default function InterviewPage() {
@@ -25,11 +27,16 @@ export default function InterviewPage() {
   const [detail, setDetail] = useState<InterviewDetail | null>(null);
   const [turns, setTurns] = useState<TranscriptTurn[]>([]);
   const [copilot, setCopilot] = useState<InterviewCopilot | null>(null);
+  const [copilotReply, setCopilotReply] = useState<CopilotAnswer | null>(null);
+  const [asking, setAsking] = useState(false);
   const [analysis, setAnalysis] = useState<InterviewAnalysis | null>(null);
   const [message, setMessage] = useState("");
   const [connection, setConnection] = useState("");
   const [ending, setEnding] = useState(false);
   const [livekit, setLivekit] = useState<{ url: string; token: string } | null>(null);
+  const [guestUrl, setGuestUrl] = useState("");
+  const [copied, setCopied] = useState(false);
+  const [left, setLeft] = useState(false);
 
   const onConnection = useCallback((state: string) => {
     setConnection(state);
@@ -43,6 +50,7 @@ export default function InterviewPage() {
     }
     setToken(stored.token);
     setRole(stored.role);
+    setGuestUrl(recallPracticeLink(roomId));
   }, [roomId]);
 
   useEffect(() => {
@@ -96,7 +104,7 @@ export default function InterviewPage() {
     void loadTranscript();
     const timer = window.setInterval(() => {
       void loadTranscript();
-    }, 2000);
+    }, 1000);
     return () => {
       stop = true;
       window.clearInterval(timer);
@@ -157,6 +165,23 @@ export default function InterviewPage() {
     };
   }, [detail?.status, role, roomId, token]);
 
+  async function askCopilot(question: string) {
+    setAsking(true);
+    try {
+      const next = await apiRequest<CopilotAnswer>(`/api/v1/interview-sessions/${roomId}/copilot`, {
+        method: "POST",
+        headers: { ...bearer(token), "Content-Type": "application/json" },
+        body: JSON.stringify({ question }),
+      });
+      setCopilotReply(next);
+      setMessage("");
+    } catch (error: unknown) {
+      setMessage(error instanceof Error ? error.message : "The copilot could not answer.");
+    } finally {
+      setAsking(false);
+    }
+  }
+
   async function endCall() {
     setEnding(true);
     try {
@@ -191,8 +216,35 @@ export default function InterviewPage() {
           <p className="text-sm text-slate-400">{connection || detail?.status || "Opening the room"}</p>
         </header>
         {message ? <p className="text-sm text-slate-300">{message}</p> : null}
+        {role === "recruiter" && detail?.status === "invited" ? (
+          <p className="text-sm text-slate-300">
+            Waiting for the guest to open the link and agree. Speech is saved after they join.
+          </p>
+        ) : null}
+        {role === "recruiter" && guestUrl ? (
+          <section className="flex flex-wrap items-center gap-3">
+            <input
+              readOnly
+              value={guestUrl}
+              aria-label="Guest link"
+              className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100"
+            />
+            <button
+              type="button"
+              onClick={() => {
+                void navigator.clipboard.writeText(guestUrl).then(
+                  () => setCopied(true),
+                  () => setCopied(false),
+                );
+              }}
+              className="rounded-lg border border-slate-700 px-4 py-2 text-sm"
+            >
+              {copied ? "Copied" : "Copy guest link"}
+            </button>
+          </section>
+        ) : null}
         {ended && role === "candidate" ? <p className="text-slate-200">This interview has ended.</p> : null}
-        {detail && livekit && token && role && !ended ? (
+        {detail && livekit && token && role && !ended && !left ? (
           <VideoRoom
             sessionId={roomId}
             token={token}
@@ -203,7 +255,7 @@ export default function InterviewPage() {
             onConnection={onConnection}
           />
         ) : null}
-        {detail && token && role && !ended ? (
+        {role === "recruiter" && detail && token && !ended ? (
           <button
             type="button"
             onClick={() => void endCall()}
@@ -213,10 +265,18 @@ export default function InterviewPage() {
             End interview
           </button>
         ) : null}
+        {role === "candidate" && !ended && !left ? (
+          <button type="button" onClick={() => setLeft(true)} className="rounded-lg border border-slate-700 px-4 py-2 text-sm">
+            Leave
+          </button>
+        ) : null}
+        {left && !ended ? (
+          <p className="text-sm text-slate-300">You left the call. It stays open until the recruiter ends it.</p>
+        ) : null}
         {role === "recruiter" ? (
           <div className="grid gap-6 lg:grid-cols-2">
             <LiveTranscript turns={turns} />
-            <InCallCopilot copilot={copilot} />
+            <InCallCopilot copilot={copilot} reply={copilotReply} asking={asking} onAsk={(question) => void askCopilot(question)} />
           </div>
         ) : null}
         {role === "recruiter" && analysis ? (

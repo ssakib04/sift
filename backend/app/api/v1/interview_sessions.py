@@ -1,6 +1,5 @@
 import asyncio
 import json
-import logging
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -9,26 +8,30 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_app_settings, get_llm, require_recruiter
 from app.core.config import Settings
-from app.core.database import SessionFactory, get_session
+from app.core.database import get_session
 from app.core.llm_fallback import FallbackLLMManager
 from app.core.session_tokens import InvalidSessionToken, SessionClaims, decode_session_token
 from app.schemas.interview import (
     AnalysisRead,
     CandidateOpenRequest,
+    CopilotAskRead,
+    CopilotAskRequest,
     CopilotRead,
     IceServerRead,
     OpenedSessionRead,
+    PracticeSessionRead,
     RecruiterOpenRequest,
     SessionDetailRead,
     SessionStatusRead,
     StartInterviewRequest,
     TranscriptTurnRead,
 )
+from app.services.interview_practice import open_practice_session
 from app.services.interview_rooms import signal_hub
-from app.services.interview_rules import InterviewError, assert_own_voice, can_store_audio, chunk_window
+from app.services.interview_rules import InterviewError
 from app.services.interview_sessions import (
     OpenedSession,
-    audio_status,
+    ask_interview_copilot,
     end_interview,
     interview_copilot,
     list_transcript,
@@ -37,11 +40,8 @@ from app.services.interview_sessions import (
     read_analysis,
     session_detail,
     start_interview,
-    store_transcript_line,
 )
-from app.services.interview_speech import AudioTranscriptionError, get_transcriber
 
-logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/interview-sessions")
 _bearer = HTTPBearer(auto_error=False)
 
@@ -136,6 +136,21 @@ async def open_recruiter(
             detail={"error_code": "SESSION_NOT_FOUND", "message": "This candidate does not have an interview."},
         )
     return _opened_read(opened)
+
+
+@router.post("/practice", response_model=PracticeSessionRead)
+async def open_practice(
+    request: Request,
+    _authorized: None = Depends(require_recruiter),
+    db: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_app_settings),
+) -> PracticeSessionRead:
+    try:
+        opened, guest_url = await open_practice_session(db, settings, _host(request))
+    except InterviewError as exc:
+        raise _http(exc) from exc
+    payload = _opened_read(opened)
+    return PracticeSessionRead(**payload.model_dump(), guest_url=guest_url)
 
 
 @router.get("/{session_id}", response_model=SessionDetailRead)
@@ -251,6 +266,7 @@ async def read_transcript(
             end_time=segment.end_time,
             text=segment.text,
             confidence=segment.confidence,
+            is_final=segment.is_final,
         )
         for segment in segments
     ]
@@ -268,7 +284,32 @@ async def read_copilot(
         draft = await interview_copilot(db, llm, claims)
     except InterviewError as exc:
         raise _http(exc) from exc
-    return CopilotRead(explored=draft.explored, gaps=draft.gaps, suggested_question=draft.suggested_question)
+    return CopilotRead(
+        explored=draft.explored,
+        gaps=draft.gaps,
+        suggested_question=draft.suggested_question,
+        profile_available=draft.profile_available,
+    )
+
+
+@router.post("/{session_id}/copilot", response_model=CopilotAskRead)
+async def ask_session_copilot(
+    session_id: UUID,
+    body: CopilotAskRequest,
+    claims: SessionClaims = Depends(_current_claims),
+    db: AsyncSession = Depends(get_session),
+    llm: FallbackLLMManager = Depends(get_llm),
+) -> CopilotAskRead:
+    try:
+        _match(claims, session_id)
+        answer = await ask_interview_copilot(db, llm, claims, body.question)
+    except InterviewError as exc:
+        raise _http(exc) from exc
+    return CopilotAskRead(
+        reply=answer.reply,
+        questions=answer.questions,
+        profile_available=answer.profile_available,
+    )
 
 
 @router.get("/{session_id}/analysis", response_model=AnalysisRead)
@@ -323,30 +364,6 @@ async def signal_socket(websocket: WebSocket, session_id: UUID) -> None:
         await signal_hub.leave(room_id, role, notify=True)
 
 
-@router.websocket("/{session_id}/audio")
-async def audio_socket(websocket: WebSocket, session_id: UUID) -> None:
-    await websocket.accept()
-    claims = await _socket_claims(websocket, session_id)
-    if claims is None:
-        return
-    pending: dict[str, object] | None = None
-    try:
-        while True:
-            incoming = await websocket.receive()
-            if incoming["type"] == "websocket.disconnect":
-                break
-            text = incoming.get("text")
-            data = incoming.get("bytes")
-            if isinstance(text, str):
-                pending = _chunk_header(claims, text)
-            elif isinstance(data, bytes) and pending is not None:
-                header = pending
-                pending = None
-                await _store_chunk(websocket, claims, header, data)
-    except WebSocketDisconnect:
-        return
-
-
 async def _socket_claims(websocket: WebSocket, session_id: UUID) -> SessionClaims | None:
     try:
         raw = await asyncio.wait_for(websocket.receive_text(), timeout=10)
@@ -370,59 +387,3 @@ async def _socket_claims(websocket: WebSocket, session_id: UUID) -> SessionClaim
         await websocket.close(code=1008)
         return None
     return claims
-
-
-def _chunk_header(claims: SessionClaims, raw: str) -> dict[str, object] | None:
-    try:
-        message = json.loads(raw)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(message, dict) or message.get("type") != "chunk":
-        return None
-    speaker = message.get("speaker")
-    if not isinstance(speaker, str):
-        return None
-    try:
-        owned = assert_own_voice(claims.role, speaker)
-        start, end = chunk_window(message.get("start_time"), message.get("end_time"))
-    except InterviewError:
-        return None
-    return {"speaker": owned, "start_time": start, "end_time": end}
-
-
-async def _store_chunk(websocket: WebSocket, claims: SessionClaims, header: dict[str, object], data: bytes) -> None:
-    async with SessionFactory() as db:
-        try:
-            status = await audio_status(db, claims)
-        except InterviewError:
-            await _send(websocket, {"type": "ignored"})
-            return
-        if not can_store_audio(status):
-            await _send(websocket, {"type": "waiting-for-consent"})
-            return
-        try:
-            text, confidence = await asyncio.to_thread(get_transcriber().transcribe, data)
-        except AudioTranscriptionError:
-            await _send(websocket, {"type": "transcription-unavailable"})
-            return
-        try:
-            await store_transcript_line(
-                db,
-                claims,
-                speaker=str(header["speaker"]),
-                start_time=float(header["start_time"]),
-                end_time=float(header["end_time"]),
-                text=text,
-                confidence=confidence,
-            )
-        except InterviewError as exc:
-            await _send(websocket, {"type": "waiting-for-consent" if exc.code == "CONSENT_REQUIRED" else "ignored"})
-            return
-    await _send(websocket, {"type": "stored"})
-
-
-async def _send(websocket: WebSocket, payload: dict[str, str]) -> None:
-    try:
-        await websocket.send_json(payload)
-    except Exception as exc:
-        logger.warning("audio_reply_failed error_type=%s", type(exc).__name__)

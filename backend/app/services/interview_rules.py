@@ -52,6 +52,12 @@ def end_clock(clock: SessionClock, *, now: datetime) -> SessionClock:
     )
 
 
+def end_for_role(role: str, clock: SessionClock, *, now: datetime) -> SessionClock:
+    """Only the recruiter can close the interview. A guest leaving does not."""
+    assert_recruiter(role)
+    return end_clock(clock, now=now)
+
+
 def can_store_audio(status: str) -> bool:
     return status == "started"
 

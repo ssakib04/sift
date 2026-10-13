@@ -63,12 +63,28 @@ class TranscriptTurnRead(BaseModel):
     end_time: float
     text: str
     confidence: float
+    is_final: bool = True
+
+
+class PracticeSessionRead(OpenedSessionRead):
+    guest_url: str
 
 
 class CopilotRead(BaseModel):
     explored: list[str]
     gaps: list[str]
     suggested_question: str
+    profile_available: bool = True
+
+
+class CopilotAskRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=2000)
+
+
+class CopilotAskRead(BaseModel):
+    reply: str
+    questions: list[str]
+    profile_available: bool
 
 
 class AnalysisRead(BaseModel):

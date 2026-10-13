@@ -1,3 +1,4 @@
+import logging
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -6,14 +7,29 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.config import Settings
+from app.core.config import Settings, get_settings
 from app.core.llm_fallback import FallbackLLMManager
 from app.core.session_tokens import SessionClaims, issue_session_token
-from app.models.candidate import Candidate, InterviewAnalysis, InterviewSession, MagicLink, TranscriptSegment
+from app.models.candidate import (
+    Candidate,
+    CandidateParseResult,
+    InterviewAnalysis,
+    InterviewSession,
+    MagicLink,
+    TranscriptSegment,
+)
 from app.models.job import JobChecklistQuery, JobVersion
 from app.services.interview_analysis import AnalysisDraft, draft_for_transcript
-from app.services.interview_livekit import issue_livekit_token
-from app.services.interview_copilot import CopilotDraft, copilot_from_transcript
+from app.services.interview_livekit import dispatch_transcriber, issue_livekit_token
+from app.services.interview_transcript import TranscriptWrite, accepted_speaker, spoken_window, transcript_write
+from app.services.interview_copilot import (
+    CopilotAnswer,
+    CopilotDraft,
+    ask_copilot,
+    copilot_from_transcript,
+    cv_profile_text,
+    normalize_copilot_ask,
+)
 from app.services.interview_rules import (
     InterviewError,
     SessionClock,
@@ -21,11 +37,13 @@ from app.services.interview_rules import (
     bind_ice_host,
     can_store_audio,
     copilot_cache_matches,
-    end_clock,
+    end_for_role,
     format_transcript,
     ice_servers,
     start_clock,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -117,17 +135,25 @@ async def session_detail(db: AsyncSession, settings: Settings, claims: SessionCl
 
 async def start_interview(db: AsyncSession, claims: SessionClaims, *, consent: bool) -> str:
     row, _title, _job_id = await _require(db, claims)
+    previous = row.status
     clock = start_clock(_clock(row), consent=consent, now=datetime.now(UTC))
     _apply_clock(row, clock)
     await db.commit()
+    if previous != "started" and row.status == "started":
+        try:
+            await dispatch_transcriber(get_settings(), str(row.id))
+        except Exception:
+            logger.exception("transcriber_dispatch_failed")
     return row.status
 
 
 async def end_interview(db: AsyncSession, llm: FallbackLLMManager, claims: SessionClaims) -> str:
     row, _title, _job_id = await _require(db, claims)
     if row.status == "ended":
+        end_for_role(claims.role, _clock(row), now=datetime.now(UTC))
         return row.status
-    clock = end_clock(_clock(row), now=datetime.now(UTC))
+    clock = end_for_role(claims.role, _clock(row), now=datetime.now(UTC))
+    await _finalize_open_lines(db, row.id)
     segments = await _segment_rows(db, row.id)
     questions = await _questions(db, row.job_version_id)
     try:
@@ -157,20 +183,45 @@ async def interview_copilot(db: AsyncSession, llm: FallbackLLMManager, claims: S
     assert_recruiter(claims.role)
     row, _title, _job_id = await _require(db, claims)
     segments = await _segment_rows(db, row.id)
-    if copilot_cache_matches(row.copilot_turn_count, len(segments)):
+    profile = await _profile_text(db, row.candidate)
+    settled = all(segment.is_final for segment in segments)
+    if settled and copilot_cache_matches(row.copilot_turn_count, len(segments)):
         return CopilotDraft(
             explored=list(row.copilot_explored or []),
             gaps=list(row.copilot_gaps or []),
             suggested_question=row.copilot_question,
+            profile_available=bool(profile.strip()),
         )
     questions = await _questions(db, row.job_version_id)
-    draft = await copilot_from_transcript(llm, questions, format_transcript(_lines(segments)))
-    row.copilot_explored = draft.explored
-    row.copilot_gaps = draft.gaps
-    row.copilot_question = draft.suggested_question
-    row.copilot_turn_count = len(segments)
-    await db.commit()
+    draft = await copilot_from_transcript(llm, questions, format_transcript(_lines(segments)), profile)
+    if settled:
+        row.copilot_explored = draft.explored
+        row.copilot_gaps = draft.gaps
+        row.copilot_question = draft.suggested_question
+        row.copilot_turn_count = len(segments)
+        await db.commit()
     return draft
+
+
+async def ask_interview_copilot(
+    db: AsyncSession,
+    llm: FallbackLLMManager,
+    claims: SessionClaims,
+    question: str,
+) -> CopilotAnswer:
+    assert_recruiter(claims.role)
+    asked = normalize_copilot_ask(question)
+    row, _title, _job_id = await _require(db, claims)
+    segments = await _segment_rows(db, row.id)
+    profile = await _profile_text(db, row.candidate)
+    checklist = await _questions(db, row.job_version_id)
+    return await ask_copilot(
+        llm,
+        checklist,
+        format_transcript(_lines(segments)),
+        profile,
+        asked,
+    )
 
 
 async def read_analysis(db: AsyncSession, claims: SessionClaims) -> InterviewAnalysis | None:
@@ -179,40 +230,79 @@ async def read_analysis(db: AsyncSession, claims: SessionClaims) -> InterviewAna
     return await db.scalar(select(InterviewAnalysis).where(InterviewAnalysis.session_id == row.id))
 
 
-async def audio_status(db: AsyncSession, claims: SessionClaims) -> str:
-    row, _title, _job_id = await _require(db, claims)
-    return row.status
-
-
-async def store_transcript_line(
-    db: AsyncSession,
-    claims: SessionClaims,
-    *,
-    speaker: str,
-    start_time: float,
-    end_time: float,
-    text: str,
-    confidence: float,
-) -> TranscriptSegment | None:
-    row, _title, _job_id = await _require(db, claims)
-    if not can_store_audio(row.status):
-        raise InterviewError("CONSENT_REQUIRED", "The candidate has not consented yet.", 409)
-    cleaned = text.strip()
-    if not cleaned:
+async def save_spoken_line(session_id: str, speaker: str, text: str, *, final: bool = True) -> TranscriptSegment | None:
+    """Store speech while it is happening, then keep the finished sentence."""
+    role = accepted_speaker(speaker)
+    if role is None:
         return None
-    segment = TranscriptSegment(
-        id=uuid.uuid4(),
-        session_id=row.id,
-        speaker=speaker,
-        start_time=start_time,
-        end_time=end_time,
-        text=cleaned,
-        confidence=confidence,
-        created_at=datetime.now(UTC),
-    )
-    db.add(segment)
-    await db.commit()
-    return segment
+    try:
+        interview_id = uuid.UUID(session_id)
+    except ValueError:
+        return None
+    from app.core.database import SessionFactory
+
+    async with SessionFactory() as db:
+        row = await db.get(InterviewSession, interview_id)
+        if row is None or not can_store_audio(row.status) or row.started_at is None:
+            return None
+        open_row = await _open_line(db, row.id, role)
+        latest_final = await db.scalar(
+            select(TranscriptSegment)
+            .where(
+                TranscriptSegment.session_id == row.id,
+                TranscriptSegment.speaker == role,
+                TranscriptSegment.is_final.is_(True),
+            )
+            .order_by(TranscriptSegment.created_at.desc())
+        )
+        action, cleaned = transcript_write(
+            open_text=open_row.text if open_row is not None else None,
+            latest_final_text=latest_final.text if latest_final is not None else None,
+            text=text,
+            final=final,
+        )
+        if action is TranscriptWrite.IGNORE or not cleaned:
+            return open_row if open_row is not None else latest_final
+        _start, end = spoken_window(cleaned, started_at=row.started_at, now=datetime.now(UTC))
+        if action is TranscriptWrite.UPDATE and open_row is not None:
+            open_row.text = cleaned
+            open_row.end_time = end
+            open_row.is_final = final
+            await db.commit()
+            return open_row
+        segment = TranscriptSegment(
+            id=uuid.uuid4(),
+            session_id=row.id,
+            speaker=role,
+            start_time=_start,
+            end_time=end,
+            text=cleaned,
+            confidence=1.0,
+            is_final=final,
+            created_at=datetime.now(UTC),
+        )
+        db.add(segment)
+        await db.commit()
+        return segment
+
+
+async def finish_open_line(session_id: str, speaker: str) -> None:
+    """Keep the words already heard when that person leaves."""
+    role = accepted_speaker(speaker)
+    if role is None:
+        return
+    try:
+        interview_id = uuid.UUID(session_id)
+    except ValueError:
+        return
+    from app.core.database import SessionFactory
+
+    async with SessionFactory() as db:
+        open_row = await _open_line(db, interview_id, role)
+        if open_row is None:
+            return
+        open_row.is_final = True
+        await db.commit()
 
 
 def _opened(settings: Settings, candidate: Candidate, role: str, host: str) -> OpenedSession | None:
@@ -278,6 +368,30 @@ def _apply_clock(row: InterviewSession, clock: SessionClock) -> None:
         row.processing_status = clock.processing_status
 
 
+async def _open_line(db: AsyncSession, session_id: uuid.UUID, speaker: str) -> TranscriptSegment | None:
+    return await db.scalar(
+        select(TranscriptSegment)
+        .where(
+            TranscriptSegment.session_id == session_id,
+            TranscriptSegment.speaker == speaker,
+            TranscriptSegment.is_final.is_(False),
+        )
+        .order_by(TranscriptSegment.created_at.desc())
+    )
+
+
+async def _finalize_open_lines(db: AsyncSession, session_id: uuid.UUID) -> None:
+    rows = await db.scalars(
+        select(TranscriptSegment).where(
+            TranscriptSegment.session_id == session_id,
+            TranscriptSegment.is_final.is_(False),
+        )
+    )
+    for segment in rows.all():
+        segment.is_final = True
+    await db.flush()
+
+
 async def _segment_rows(db: AsyncSession, session_id: uuid.UUID) -> list[TranscriptSegment]:
     result = await db.scalars(
         select(TranscriptSegment)
@@ -289,6 +403,12 @@ async def _segment_rows(db: AsyncSession, session_id: uuid.UUID) -> list[Transcr
 
 def _lines(segments: list[TranscriptSegment]) -> list[tuple[str, float, float, str]]:
     return [(segment.speaker, segment.start_time, segment.end_time, segment.text) for segment in segments]
+
+
+async def _profile_text(db: AsyncSession, candidate: Candidate) -> str:
+    parse = await db.scalar(select(CandidateParseResult).where(CandidateParseResult.candidate_id == candidate.id))
+    raw = parse.raw_text if parse is not None and parse.status == "parsed" else ""
+    return cv_profile_text(candidate.full_name, raw)
 
 
 async def _questions(db: AsyncSession, version_id: uuid.UUID) -> list[str]:

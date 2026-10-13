@@ -13,6 +13,7 @@ from app.services.interview_rules import (
     can_store_audio,
     copilot_cache_matches,
     end_clock,
+    end_for_role,
     format_transcript,
     ice_servers,
     outbound_signal,
@@ -47,6 +48,18 @@ def test_end_waits_for_start_and_stays_ended() -> None:
     assert ended.status == "ended"
     assert ended.processing_status == "pending"
     assert end_clock(ended, now=now.replace(minute=45)) is ended
+
+
+def test_only_the_recruiter_can_end_the_interview() -> None:
+    now = datetime(2026, 10, 12, 9, 30, tzinfo=UTC)
+    started = start_clock(_clock(), consent=True, now=now)
+    with pytest.raises(InterviewError) as denied:
+        end_for_role("candidate", started, now=now)
+    assert denied.value.code == "INTERVIEW_FORBIDDEN"
+    assert started.status == "started"
+    ended = end_for_role("recruiter", started, now=now)
+    assert ended.status == "ended"
+    assert ended.ended_at == now
 
 
 def test_audio_is_stored_only_after_the_candidate_starts() -> None:

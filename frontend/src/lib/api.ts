@@ -126,12 +126,24 @@ export type TranscriptTurn = {
   end_time: number;
   text: string;
   confidence: number;
+  is_final?: boolean;
+};
+
+export type PracticeInterview = OpenedInterview & {
+  guest_url: string;
 };
 
 export type InterviewCopilot = {
   explored: string[];
   gaps: string[];
   suggested_question: string;
+  profile_available?: boolean;
+};
+
+export type CopilotAnswer = {
+  reply: string;
+  questions: string[];
+  profile_available: boolean;
 };
 
 export type InterviewAnalysis = {
@@ -199,6 +211,17 @@ export function bearer(token: string): HeadersInit {
 export function rememberInterview(sessionId: string, token: string, role: string) {
   sessionStorage.setItem(`sift-interview-token:${sessionId}`, token);
   sessionStorage.setItem(`sift-interview-role:${sessionId}`, role);
+}
+
+export function rememberPracticeLink(sessionId: string, url: string) {
+  sessionStorage.setItem(`sift-practice-link:${sessionId}`, url);
+}
+
+export function recallPracticeLink(sessionId: string): string {
+  if (typeof window === "undefined") {
+    return "";
+  }
+  return sessionStorage.getItem(`sift-practice-link:${sessionId}`) ?? "";
 }
 
 export function recallInterview(sessionId: string): { token: string; role: "candidate" | "recruiter" } | null {
