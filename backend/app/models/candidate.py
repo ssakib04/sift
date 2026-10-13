@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, Uuid
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -197,6 +197,7 @@ class TranscriptSegment(Base):
     end_time: Mapped[float] = mapped_column(Float)
     text: Mapped[str] = mapped_column(Text)
     confidence: Mapped[float] = mapped_column(Float)
+    is_final: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
     session: Mapped[InterviewSession] = relationship(back_populates="transcript_segments")

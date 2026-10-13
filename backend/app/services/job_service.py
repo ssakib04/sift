@@ -23,6 +23,7 @@ from app.schemas.job import (
     JobVersionUpdate,
     PublicJobRead,
 )
+from app.services.interview_practice import is_practice_job
 from app.services.job_rules import ensure_can_open_version, ensure_editable
 from app.services.mcp_publish import McpPublishError, publish_via_mcp
 from app.services.postajob import JobPoster, PostAJobError, PublishRequest
@@ -172,7 +173,7 @@ async def open_next_version(session: AsyncSession, job_id: uuid.UUID, settings: 
 async def list_jobs(session: AsyncSession, settings: Settings) -> list[JobRead]:
     statement = select(Job).options(selectinload(Job.versions).options(*_VERSION_LOAD)).order_by(Job.created_at.desc())
     jobs = list((await session.scalars(statement)).unique().all())
-    return [_to_job_read(job, settings) for job in jobs]
+    return [_to_job_read(job, settings) for job in jobs if not is_practice_job(job.mail_subject)]
 
 
 async def get_job(session: AsyncSession, job_id: uuid.UUID, settings: Settings) -> JobRead:
