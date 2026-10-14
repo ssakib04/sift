@@ -3,7 +3,11 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { SectionLinks } from "@/components/section-links";
+import { AppShell } from "@/components/ui/app-shell";
+import { buttonClass } from "@/components/ui/button";
+import { fieldClass } from "@/components/ui/field";
+import { PageHeader } from "@/components/ui/page-header";
+import { Panel } from "@/components/ui/panel";
 import { PracticeInterview, apiRequest, rememberInterview, rememberPracticeLink } from "@/lib/api";
 
 export default function PracticePage() {
@@ -51,52 +55,38 @@ export default function PracticePage() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-950 px-6 py-10 text-slate-100">
+    <AppShell>
       <div className="mx-auto max-w-xl space-y-8">
-        <SectionLinks />
-        <header className="space-y-2">
-          <p className="text-sm uppercase tracking-[0.2em] text-slate-400">Practice</p>
-          <h1 className="text-3xl font-semibold">Try a call without a candidate</h1>
-          <p className="text-slate-300">
-            This opens a video room for you as the interviewer and gives you a guest link. Paste that link on another
-            device. The guest agrees, then both of you are in the same call. No job is posted and no email is sent.
-          </p>
-        </header>
-        {message ? <p className="text-sm text-slate-300">{message}</p> : null}
-        <button
-          type="button"
-          onClick={() => void createRoom()}
-          disabled={busy}
-          className="rounded-lg bg-white px-4 py-2 text-sm font-medium text-slate-950 disabled:opacity-60"
-        >
-          {guestUrl ? "Start another practice call" : "Start a practice call"}
-        </button>
-        {guestUrl ? (
-          <section className="space-y-3">
-            <label className="block space-y-2 text-sm text-slate-300" htmlFor="guest-link">
-              Guest link
-              <input
-                id="guest-link"
-                readOnly
-                value={guestUrl}
-                className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100"
-              />
-            </label>
-            <div className="flex flex-wrap gap-3">
-              <button type="button" onClick={() => void copyLink()} className="rounded-lg border border-slate-700 px-4 py-2 text-sm">
-                {copied ? "Copied" : "Copy guest link"}
-              </button>
-              <button
-                type="button"
-                onClick={enterAsInterviewer}
-                className="rounded-lg bg-white px-4 py-2 text-sm font-medium text-slate-950"
-              >
-                Enter as interviewer
-              </button>
-            </div>
-          </section>
-        ) : null}
+        <PageHeader
+          eyebrow="Practice"
+          title="Try a call without a candidate"
+          lede="This opens a video room for you as the interviewer and gives you a guest link. Paste that link on another device. The guest agrees, then both of you are in the same call. No job is posted and no email is sent."
+        />
+        <Panel>
+          <div className="space-y-4 p-6">
+            {message ? <p className="text-sm text-mist">{message}</p> : null}
+            <button type="button" onClick={() => void createRoom()} disabled={busy} className={buttonClass()}>
+              {guestUrl ? "Start another practice call" : "Start a practice call"}
+            </button>
+            {guestUrl ? (
+              <section className="space-y-3">
+                <label className="block space-y-2 text-sm text-mist" htmlFor="guest-link">
+                  Guest link
+                  <input id="guest-link" readOnly value={guestUrl} className={fieldClass} />
+                </label>
+                <div className="flex flex-wrap gap-3">
+                  <button type="button" onClick={() => void copyLink()} className={buttonClass("secondary")}>
+                    {copied ? "Copied" : "Copy guest link"}
+                  </button>
+                  <button type="button" onClick={enterAsInterviewer} className={buttonClass()}>
+                    Enter as interviewer
+                  </button>
+                </div>
+              </section>
+            ) : null}
+          </div>
+        </Panel>
       </div>
-    </main>
+    </AppShell>
   );
 }

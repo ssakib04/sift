@@ -87,32 +87,34 @@ export function PersistentChatbot() {
   return (
     <div className="fixed bottom-5 right-5 z-50">
       {open ? (
-        <section className="mb-3 flex h-[28rem] w-[22rem] max-w-[calc(100vw-2.5rem)] flex-col rounded-xl border border-slate-700 bg-slate-950 text-slate-100 shadow-xl">
-          <header className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
+        <section className="mb-3 flex h-[28rem] w-[22rem] max-w-[calc(100vw-2.5rem)] flex-col rounded-card border border-ivory/10 bg-night/75 text-ivory shadow-lift backdrop-blur-2xl">
+          <header className="flex items-center justify-between border-b border-ivory/10 px-4 py-3">
             <div>
-              <p className="text-xs uppercase tracking-[0.16em] text-slate-400">Copilot</p>
+              <p className="text-xs uppercase tracking-[0.16em] text-mist">Copilot</p>
               <h2 className="text-sm font-semibold">Recruiter agent</h2>
             </div>
-            <button type="button" onClick={() => setOpen(false)} className="text-sm text-slate-400">
+            <button type="button" onClick={() => setOpen(false)} className="text-sm text-mist">
               Close
             </button>
           </header>
           <div className="flex-1 space-y-3 overflow-y-auto px-4 py-3 text-sm">
             {lines.map((line, index) => (
               <div key={`${line.role}-${index}`} className={line.role === "user" ? "text-right" : "text-left"}>
-                <p className="inline-block max-w-[90%] whitespace-pre-wrap rounded-lg bg-slate-900 px-3 py-2 text-left">{line.content}</p>
+                <p className="inline-block max-w-[90%] whitespace-pre-wrap rounded-lg bg-night/60 px-3 py-2 text-left text-ivory">
+                  {line.content}
+                </p>
                 {line.job ? <JobCard job={line.job} busy={busy} onApprove={approve} /> : null}
               </div>
             ))}
           </div>
-          <form onSubmit={onSubmit} className="flex gap-2 border-t border-slate-800 p-3">
+          <form onSubmit={onSubmit} className="flex gap-2 border-t border-ivory/10 p-3">
             <input
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
               placeholder="Draft a senior Python role..."
-              className="min-w-0 flex-1 rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm"
+              className="min-w-0 flex-1 rounded-control border border-ivory/15 bg-night/50 px-3 py-2 text-sm text-ivory placeholder:text-mist/70"
             />
-            <button type="submit" disabled={busy} className="rounded-md bg-white px-3 py-2 text-sm font-medium text-slate-950 disabled:opacity-60">
+            <button type="submit" disabled={busy} className="rounded-control bg-action px-3 py-2 text-sm font-semibold text-ivory disabled:opacity-60">
               Send
             </button>
           </form>
@@ -121,7 +123,7 @@ export function PersistentChatbot() {
       <button
         type="button"
         onClick={() => setOpen((current) => !current)}
-        className="ml-auto block rounded-full bg-white px-4 py-2 text-sm font-medium text-slate-950 shadow-lg"
+        className="ml-auto block rounded-full bg-action px-4 py-2 text-sm font-semibold text-ivory shadow-lift"
       >
         Copilot
       </button>
@@ -141,16 +143,21 @@ function JobCard({
   const latest = job.versions[job.versions.length - 1];
   if (!latest) return null;
   return (
-    <div className="mt-2 max-w-[90%] rounded-lg border border-slate-800 px-3 py-2 text-left text-xs text-slate-300">
+    <div className="mt-2 max-w-[90%] rounded-lg border border-ivory/10 px-3 py-2 text-left text-xs text-mist">
       <p>
         {job.title} · v{latest.version_number} · {latest.status}
       </p>
       <div className="mt-2 flex flex-wrap gap-2">
-        <a href={`/jobs?job=${job.id}`} className="rounded-md border border-slate-600 px-2 py-1">
+        <a href={`/jobs?job=${job.id}`} className="rounded-control border border-ivory/15 px-2 py-1 text-ivory">
           Review draft
         </a>
         {latest.status === "draft" ? (
-          <button type="button" disabled={busy} onClick={() => onApprove(job)} className="rounded-md bg-white px-2 py-1 text-slate-950 disabled:opacity-60">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => onApprove(job)}
+            className="rounded-control bg-action px-2 py-1 text-ivory disabled:opacity-60"
+          >
             Approve and post
           </button>
         ) : null}

@@ -1,5 +1,6 @@
 "use client";
 
+import { buttonClass } from "@/components/ui/button";
 import { ConnectionState, Room, RoomEvent, Track } from "livekit-client";
 import { useEffect, useRef, useState } from "react";
 
@@ -156,25 +157,21 @@ export function VideoRoom({
 
   return (
     <section className="space-y-4">
-      <p className="text-sm text-slate-300">{status}</p>
+      <p className="text-sm text-mist">{status}</p>
       <div className="grid gap-4 md:grid-cols-2">
-        <video ref={localRef} autoPlay muted playsInline className="aspect-video w-full rounded-xl bg-slate-900" />
-        <video ref={remoteRef} autoPlay playsInline className="aspect-video w-full rounded-xl bg-slate-900" />
+        <video ref={localRef} autoPlay muted playsInline className="aspect-video w-full rounded-card bg-night object-cover" />
+        <video ref={remoteRef} autoPlay playsInline className="aspect-video w-full rounded-card bg-night object-cover" />
       </div>
       <div className="flex flex-wrap gap-3">
         {status.startsWith("The camera") || status.startsWith("The video") ? (
-          <button
-            type="button"
-            onClick={() => setAttempt((value) => value + 1)}
-            className="rounded-lg bg-white px-4 py-2 text-sm font-medium text-slate-950"
-          >
+          <button type="button" onClick={() => setAttempt((value) => value + 1)} className={buttonClass()}>
             Open camera and microphone
           </button>
         ) : null}
-        <button type="button" onClick={toggleMute} className="rounded-lg border border-slate-700 px-4 py-2 text-sm">
+        <button type="button" onClick={toggleMute} className={buttonClass("secondary")}>
           {muted ? "Unmute" : "Mute"}
         </button>
-        <button type="button" onClick={toggleCamera} className="rounded-lg border border-slate-700 px-4 py-2 text-sm">
+        <button type="button" onClick={toggleCamera} className={buttonClass("secondary")}>
           {cameraOff ? "Start camera" : "Stop camera"}
         </button>
       </div>

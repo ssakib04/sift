@@ -3,7 +3,9 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-import { SectionLinks } from "@/components/section-links";
+import { AppShell } from "@/components/ui/app-shell";
+import { PageHeader } from "@/components/ui/page-header";
+import { Panel } from "@/components/ui/panel";
 import { CandidateGroup, apiRequest } from "@/lib/api";
 
 export default function CandidatesPage() {
@@ -19,37 +21,37 @@ export default function CandidatesPage() {
   }, []);
 
   return (
-    <main className="min-h-screen bg-slate-950 px-6 py-10 text-slate-100">
+    <AppShell>
       <div className="mx-auto max-w-3xl space-y-8">
-        <SectionLinks />
-        <header className="space-y-2">
-          <p className="text-sm uppercase tracking-[0.2em] text-slate-400">Candidates</p>
-          <h1 className="text-3xl font-semibold">Assessed applicants</h1>
-        </header>
-        {message ? <p className="text-sm text-slate-300">{message}</p> : null}
-        {groups.length === 0 && !message ? <p className="text-sm text-slate-400">No candidates yet.</p> : null}
+        <PageHeader eyebrow="Candidates" title="Assessed applicants" />
+        {message ? <p className="text-sm text-mist">{message}</p> : null}
+        {groups.length === 0 && !message ? <p className="text-sm text-mist">No candidates yet.</p> : null}
         {groups.map((group) => (
           <section key={group.job_id} className="space-y-3">
-            <h2 className="text-xl font-medium">{group.job_title}</h2>
-            <p className="text-sm text-slate-400">Subject: {group.mail_subject}</p>
+            <h2 className="font-display text-2xl font-medium text-ivory">{group.job_title}</h2>
+            <p className="text-sm text-mist">Subject: {group.mail_subject}</p>
             <ul className="space-y-2">
               {group.candidates.map((candidate) => (
-                <li key={candidate.id} className="rounded-xl border border-slate-800 px-4 py-3">
-                  <Link href={`/candidates/${candidate.id}`} className="font-medium hover:underline">
-                    {candidate.rank ? `#${candidate.rank}` : "Unranked"} · {candidate.full_name || "Unnamed"}
-                  </Link>
-                  <p className="text-sm text-slate-300">{candidate.email}</p>
-                  <p className="text-sm text-slate-400">
-                    {candidate.aggregate_score !== null ? `Score ${candidate.aggregate_score.toFixed(2)}` : "No score"}
-                    {candidate.invited ? " · invited" : ""}
-                    {` · ${candidate.parse_status}`}
-                  </p>
+                <li key={candidate.id}>
+                  <Panel>
+                    <div className="px-4 py-3">
+                      <Link href={`/candidates/${candidate.id}`} className="font-medium text-ivory hover:text-amber">
+                        {candidate.rank ? `#${candidate.rank}` : "Unranked"} · {candidate.full_name || "Unnamed"}
+                      </Link>
+                      <p className="text-sm text-mist">{candidate.email}</p>
+                      <p className="text-sm text-mist">
+                        {candidate.aggregate_score !== null ? `Score ${candidate.aggregate_score.toFixed(2)}` : "No score"}
+                        {candidate.invited ? " · invited" : ""}
+                        {` · ${candidate.parse_status}`}
+                      </p>
+                    </div>
+                  </Panel>
                 </li>
               ))}
             </ul>
           </section>
         ))}
       </div>
-    </main>
+    </AppShell>
   );
 }

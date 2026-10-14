@@ -3,6 +3,10 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { buttonClass } from "@/components/ui/button";
+import { GuestFrame } from "@/components/ui/guest-frame";
+import { PageHeader } from "@/components/ui/page-header";
+import { Panel } from "@/components/ui/panel";
 import { InviteRecord, OpenedInterview, apiRequest, bearer, rememberInterview } from "@/lib/api";
 
 export default function InvitePage({ params }: { params: { token: string } }) {
@@ -43,34 +47,29 @@ export default function InvitePage({ params }: { params: { token: string } }) {
   }
 
   return (
-    <main className="min-h-screen bg-slate-950 px-6 py-10 text-slate-100">
-      <div className="mx-auto max-w-xl space-y-6">
-        {message ? <p className="text-sm text-slate-300">{message}</p> : null}
+    <GuestFrame>
+      <div className="w-full space-y-6">
+        {message ? <p className="text-sm text-mist">{message}</p> : null}
         {invite ? (
-          <article className="space-y-4">
-            <p className="text-sm uppercase tracking-[0.2em] text-slate-400">{invite.company_name}</p>
-            <h1 className="text-3xl font-semibold">You are invited to interview</h1>
-            <p className="text-slate-200">Role: {invite.job_title}</p>
-            <label className="flex items-start gap-3 text-sm text-slate-300">
-              <input
-                type="checkbox"
-                checked={consent}
-                onChange={(event) => setConsent(event.target.checked)}
-                className="mt-1"
-              />
-              I agree to join this video interview and to have the conversation transcribed for the recruiter.
-            </label>
-            <button
-              type="button"
-              disabled={!consent || busy}
-              onClick={() => void join()}
-              className="rounded-lg bg-white px-4 py-2 text-sm font-medium text-slate-950 disabled:opacity-60"
-            >
-              Join interview
-            </button>
-          </article>
+          <Panel>
+            <article className="space-y-4 p-6">
+              <PageHeader eyebrow={invite.company_name} title="You are invited to interview" lede={`Role: ${invite.job_title}`} />
+              <label className="flex items-start gap-3 text-sm text-mist">
+                <input
+                  type="checkbox"
+                  checked={consent}
+                  onChange={(event) => setConsent(event.target.checked)}
+                  className="mt-1"
+                />
+                I agree to join this video interview and to have the conversation transcribed for the recruiter.
+              </label>
+              <button type="button" disabled={!consent || busy} onClick={() => void join()} className={buttonClass()}>
+                Join interview
+              </button>
+            </article>
+          </Panel>
         ) : null}
       </div>
-    </main>
+    </GuestFrame>
   );
 }

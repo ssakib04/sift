@@ -3,7 +3,10 @@
 import { FormEvent, Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
-import { SectionLinks } from "@/components/section-links";
+import { AppShell } from "@/components/ui/app-shell";
+import { buttonClass } from "@/components/ui/button";
+import { fieldClass } from "@/components/ui/field";
+import { PageHeader } from "@/components/ui/page-header";
 import { ApiError, CandidateRecord, ChecklistQuery, JobRecord, apiRequest } from "@/lib/api";
 
 const CATEGORIES = [
@@ -214,34 +217,30 @@ function JobsPageContent() {
   const locked = latest?.status === "locked";
 
   return (
-    <main className="min-h-screen bg-slate-950 px-6 py-10 text-slate-100">
+    <AppShell>
       <div className="mx-auto max-w-3xl space-y-8">
-        <SectionLinks />
-        <header className="space-y-2">
-          <p className="text-sm uppercase tracking-[0.2em] text-slate-400">Jobs</p>
-          <h1 className="text-3xl font-semibold">Create a locked job profile</h1>
-        </header>
-        <section className="space-y-3 rounded-xl border border-emerald-800/60 bg-slate-900 p-5">
-          <h2 className="text-lg font-medium">Gmail inbox</h2>
-          <p className="text-sm text-slate-400">
+        <PageHeader eyebrow="Jobs" title="Create a locked job profile" />
+        <section className="space-y-3 rounded-card border border-ivory/10 bg-night/65 p-5 backdrop-blur-2xl">
+          <h2 className="font-display text-2xl font-medium text-ivory">Gmail inbox</h2>
+          <p className="text-sm text-mist">
             Pull unread CV emails from the shared apply mailbox, match them to locked jobs, and score them.
           </p>
           <button
             type="button"
             onClick={checkInbox}
             disabled={busy}
-            className="rounded-md bg-white px-4 py-2 text-sm font-medium text-slate-950 disabled:opacity-60"
+            className={buttonClass()}
           >
             {busy ? "Checking inbox..." : "Check inbox"}
           </button>
         </section>
-        <section className="space-y-3 rounded-xl border border-slate-800 bg-slate-900 p-5">
-          <h2 className="text-lg font-medium">Open an existing job</h2>
-          <p className="text-sm text-slate-400">
+        <section className="space-y-3 rounded-card border border-ivory/10 bg-night/65 p-5 backdrop-blur-2xl">
+          <h2 className="font-display text-2xl font-medium text-ivory">Open an existing job</h2>
+          <p className="text-sm text-mist">
             Open a locked job to review applicants after checking the inbox.
           </p>
           {jobs.length === 0 ? (
-            <p className="text-sm text-slate-500">No jobs yet. Generate a draft below, then approve it.</p>
+            <p className="text-sm text-mist">No jobs yet. Generate a draft below, then approve it.</p>
           ) : (
             <ul className="space-y-2">
               {jobs.map((record) => {
@@ -256,11 +255,11 @@ function JobsPageContent() {
                         setMessage(`Opened ${record.title}.`);
                       }}
                       className={`w-full rounded-md border px-4 py-3 text-left text-sm ${
-                        isOpen ? "border-white bg-slate-800" : "border-slate-800 hover:border-slate-600"
+                        isOpen ? "border-ivory bg-ivory/10" : "border-ivory/10 hover:border-ivory/30"
                       }`}
                     >
                       <span className="font-medium">{record.title}</span>
-                      <span className="mt-1 block text-slate-400">
+                      <span className="mt-1 block text-mist">
                         v{version?.version_number ?? "?"} · {version?.status ?? "unknown"}
                         {version?.status === "locked" ? " · applicants available" : ""}
                       </span>
@@ -271,14 +270,14 @@ function JobsPageContent() {
             </ul>
           )}
         </section>
-        <form onSubmit={onCreate} className="grid gap-4 rounded-xl border border-slate-800 bg-slate-900 p-5">
+        <form onSubmit={onCreate} className="grid gap-4 rounded-card border border-ivory/10 bg-night/65 p-5 backdrop-blur-2xl">
           <label className="grid gap-1 text-sm">
             Title
-            <input name="title" required className="rounded-md border border-slate-700 bg-slate-950 px-3 py-2" />
+            <input name="title" required className="rounded-control border border-ivory/15 bg-night/50 px-3 py-2 text-ivory" />
           </label>
           <label className="grid gap-1 text-sm">
             Seniority
-            <select name="seniority" defaultValue="Mid-Level" className="rounded-md border border-slate-700 bg-slate-950 px-3 py-2">
+            <select name="seniority" defaultValue="Mid-Level" className="rounded-control border border-ivory/15 bg-night/50 px-3 py-2 text-ivory">
               <option>Junior</option>
               <option>Mid-Level</option>
               <option>Senior</option>
@@ -287,37 +286,37 @@ function JobsPageContent() {
           </label>
           <label className="grid gap-1 text-sm">
             Required skills
-            <input name="required_skills" required placeholder="Python, FastAPI" className="rounded-md border border-slate-700 bg-slate-950 px-3 py-2" />
+            <input name="required_skills" required placeholder="Python, FastAPI" className="rounded-control border border-ivory/15 bg-night/50 px-3 py-2 text-ivory" />
           </label>
           <label className="grid gap-1 text-sm">
             Preferred skills
-            <input name="preferred_skills" placeholder="LangGraph, pgvector" className="rounded-md border border-slate-700 bg-slate-950 px-3 py-2" />
+            <input name="preferred_skills" placeholder="LangGraph, pgvector" className="rounded-control border border-ivory/15 bg-night/50 px-3 py-2 text-ivory" />
           </label>
           <label className="grid gap-1 text-sm">
             Qualifications
-            <input name="qualifications" required className="rounded-md border border-slate-700 bg-slate-950 px-3 py-2" />
+            <input name="qualifications" required className="rounded-control border border-ivory/15 bg-night/50 px-3 py-2 text-ivory" />
           </label>
           <label className="grid gap-1 text-sm">
             Minimum years
-            <input name="minimum_years" type="number" min={0} defaultValue={3} className="rounded-md border border-slate-700 bg-slate-950 px-3 py-2" />
+            <input name="minimum_years" type="number" min={0} defaultValue={3} className="rounded-control border border-ivory/15 bg-night/50 px-3 py-2 text-ivory" />
           </label>
           <div className="grid gap-3 sm:grid-cols-3">
             <label className="grid gap-1 text-sm">
               Technical weight
-              <input name="technical_weight" type="number" step="0.01" defaultValue={0.5} className="rounded-md border border-slate-700 bg-slate-950 px-3 py-2" />
+              <input name="technical_weight" type="number" step="0.01" defaultValue={0.5} className="rounded-control border border-ivory/15 bg-night/50 px-3 py-2 text-ivory" />
             </label>
             <label className="grid gap-1 text-sm">
               Experience weight
-              <input name="experience_weight" type="number" step="0.01" defaultValue={0.3} className="rounded-md border border-slate-700 bg-slate-950 px-3 py-2" />
+              <input name="experience_weight" type="number" step="0.01" defaultValue={0.3} className="rounded-control border border-ivory/15 bg-night/50 px-3 py-2 text-ivory" />
             </label>
             <label className="grid gap-1 text-sm">
               Qualification weight
-              <input name="qualification_weight" type="number" step="0.01" defaultValue={0.2} className="rounded-md border border-slate-700 bg-slate-950 px-3 py-2" />
+              <input name="qualification_weight" type="number" step="0.01" defaultValue={0.2} className="rounded-control border border-ivory/15 bg-night/50 px-3 py-2 text-ivory" />
             </label>
           </div>
           <label className="grid gap-1 text-sm">
             Contract
-            <select name="contract" defaultValue="Full Time" className="rounded-md border border-slate-700 bg-slate-950 px-3 py-2">
+            <select name="contract" defaultValue="Full Time" className="rounded-control border border-ivory/15 bg-night/50 px-3 py-2 text-ivory">
               <option>Full Time</option>
               <option>Part Time</option>
               <option>Freelance</option>
@@ -326,20 +325,20 @@ function JobsPageContent() {
           </label>
           <label className="grid gap-1 text-sm">
             Category
-            <select name="category" defaultValue="Information Technology" className="rounded-md border border-slate-700 bg-slate-950 px-3 py-2">
+            <select name="category" defaultValue="Information Technology" className="rounded-control border border-ivory/15 bg-night/50 px-3 py-2 text-ivory">
               {CATEGORIES.map((category) => (
                 <option key={category}>{category}</option>
               ))}
             </select>
           </label>
-          <button type="submit" disabled={busy} className="w-fit rounded-md bg-white px-4 py-2 text-sm font-medium text-slate-950 disabled:opacity-60">
+          <button type="submit" disabled={busy} className={`w-fit ${buttonClass()}`}>
             {busy ? "Working..." : "Generate draft"}
           </button>
         </form>
         {latest ? (
-          <section className="space-y-4 rounded-xl border border-slate-800 bg-slate-900 p-5">
+          <section className="space-y-4 rounded-card border border-ivory/10 bg-night/65 p-5 backdrop-blur-2xl">
             <div className="flex items-center justify-between gap-3">
-              <h2 className="text-xl font-semibold">
+              <h2 className="font-display text-2xl font-medium text-ivory">
                 {job?.title} · v{latest.version_number} · {latest.status}
               </h2>
             </div>
@@ -350,13 +349,13 @@ function JobsPageContent() {
                 onChange={(event) => setDescription(event.target.value)}
                 readOnly={locked}
                 rows={8}
-                className="rounded-md border border-slate-700 bg-slate-950 px-3 py-2"
+                className="rounded-control border border-ivory/15 bg-night/50 px-3 py-2 text-ivory"
               />
             </label>
             <ol className="space-y-3">
               {queries.map((query, index) => (
-                <li key={query.query_id} className="rounded-md border border-slate-800 p-3 text-sm">
-                  <p className="text-slate-400">
+                <li key={query.query_id} className="rounded-control border border-ivory/10 p-3 text-sm">
+                  <p className="text-mist">
                     {query.query_id} · {query.dimension} · {query.requirement_type} · weight {query.weight.toFixed(2)}
                   </p>
                   <textarea
@@ -368,43 +367,43 @@ function JobsPageContent() {
                       next[index] = { ...query, question: event.target.value };
                       setQueries(next);
                     }}
-                    className="mt-2 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2"
+                    className="mt-2 w-full rounded-control border border-ivory/15 bg-night/50 px-3 py-2 text-ivory"
                   />
                 </li>
               ))}
             </ol>
             <div className="flex flex-wrap gap-3">
               {locked ? (
-                <button type="button" onClick={newVersion} disabled={busy} className="rounded-md bg-white px-4 py-2 text-sm font-medium text-slate-950 disabled:opacity-60">
+                <button type="button" onClick={newVersion} disabled={busy} className={buttonClass()}>
                   New version
                 </button>
               ) : (
                 <>
-                  <button type="button" onClick={saveDraft} disabled={busy} className="rounded-md border border-slate-600 px-4 py-2 text-sm disabled:opacity-60">
+                  <button type="button" onClick={saveDraft} disabled={busy} className={buttonClass("secondary")}>
                     Save draft
                   </button>
-                  <button type="button" onClick={approve} disabled={busy} className="rounded-md bg-white px-4 py-2 text-sm font-medium text-slate-950 disabled:opacity-60">
+                  <button type="button" onClick={approve} disabled={busy} className={buttonClass()}>
                     Approve and post
                   </button>
                 </>
               )}
             </div>
             {job && job.versions.some((version) => version.status === "locked") ? (
-              <section className="space-y-3 border-t border-slate-800 pt-4">
-                <h3 className="text-lg font-medium">Applicants</h3>
-                <p className="text-sm text-slate-300">
+              <section className="space-y-3 border-t border-ivory/10 pt-4">
+                <h3 className="font-display text-2xl font-medium text-ivory">Applicants</h3>
+                <p className="text-sm text-mist">
                   Email a PDF or DOCX CV to {job.apply_email}. Subject: {job.mail_subject}. The job id {job.id} also matches.
                 </p>
-                <button type="button" onClick={checkInbox} disabled={busy} className="rounded-md border border-slate-600 px-4 py-2 text-sm disabled:opacity-60">
+                <button type="button" onClick={checkInbox} disabled={busy} className={buttonClass("secondary")}>
                   Check inbox
                 </button>
                 <ul className="space-y-2">
                   {candidates.map((candidate) => (
-                    <li key={candidate.id} className="rounded-md border border-slate-800 p-3 text-sm">
+                    <li key={candidate.id} className="rounded-control border border-ivory/10 p-3 text-sm">
                       <p>
                         {candidate.rank ? `#${candidate.rank}` : "Unranked"} · {candidate.full_name || "Unnamed"} · {candidate.email}
                       </p>
-                      <p className="text-slate-400">
+                      <p className="text-mist">
                         {candidate.parse_status}
                         {candidate.aggregate_score !== null ? ` · score ${candidate.aggregate_score.toFixed(2)}` : ""}
                         {candidate.invited ? " · invited" : ""}
@@ -415,7 +414,7 @@ function JobsPageContent() {
               </section>
             ) : null}
             {latest.apply_url ? (
-              <p className="text-sm text-slate-300">
+              <p className="text-sm text-mist">
                 Public listing: <a className="underline" href={latest.apply_url}>{latest.apply_url}</a>
                 {latest.posting_detail?.startsWith("http") ? (
                   <>
@@ -429,15 +428,15 @@ function JobsPageContent() {
             ) : null}
           </section>
         ) : null}
-        {message ? <p className="text-sm text-slate-300">{message}</p> : null}
+        {message ? <p className="text-sm text-mist">{message}</p> : null}
       </div>
-    </main>
+    </AppShell>
   );
 }
 
 export default function JobsPage() {
   return (
-    <Suspense fallback={<main className="min-h-screen bg-slate-950" />}>
+    <Suspense fallback={<AppShell><p className="text-sm text-mist">Opening jobs…</p></AppShell>}>
       <JobsPageContent />
     </Suspense>
   );

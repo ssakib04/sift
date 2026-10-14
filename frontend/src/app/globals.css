@@ -1,3 +1,56 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Design tokens live in tailwind.config.ts. */
+
+body,
+body.font-sans {
+  color-scheme: dark;
+  background: #100908;
+  font-family: var(--font-ui), ui-sans-serif, system-ui, sans-serif;
+}
+
+::selection {
+  background: rgb(227 106 46 / 0.35);
+  color: #f7f1ea;
+}
+
+:focus-visible {
+  outline: 2px solid #f0a04b;
+  outline-offset: 3px;
+}
+
+.atmosphere-grain {
+  opacity: 0.08;
+  background-image: radial-gradient(rgb(247 241 234 / 0.55) 0.55px, transparent 0.55px);
+  background-size: 3px 3px;
+  mix-blend-mode: overlay;
+}
+
+.atmosphere-drift {
+  animation: atmosphere-drift 22s ease-in-out infinite;
+}
+
+@keyframes atmosphere-drift {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(0, -18px, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .atmosphere-drift {
+    animation: none;
+  }
+
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}

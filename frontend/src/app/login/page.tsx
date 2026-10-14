@@ -3,6 +3,11 @@
 import { FormEvent, Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
+import { buttonClass } from "@/components/ui/button";
+import { fieldClass } from "@/components/ui/field";
+import { GuestFrame } from "@/components/ui/guest-frame";
+import { PageHeader } from "@/components/ui/page-header";
+import { Panel } from "@/components/ui/panel";
 import { apiRequest, rememberRecruiter } from "@/lib/api";
 
 export default function LoginPage() {
@@ -40,29 +45,28 @@ function LoginForm() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-slate-950 px-6 text-slate-100">
-      <form onSubmit={(event) => void onSubmit(event)} className="w-full max-w-sm space-y-4">
-        <p className="text-sm uppercase tracking-[0.2em] text-slate-400">Sift</p>
-        <h1 className="text-3xl font-semibold">Recruiter sign-in</h1>
-        <label className="block space-y-2 text-sm">
-          <span className="text-slate-300">Password</span>
-          <input
-            type="password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            autoComplete="current-password"
-            className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100"
-          />
-        </label>
-        {message ? <p className="text-sm text-slate-300">{message}</p> : null}
-        <button
-          type="submit"
-          disabled={busy || password.length === 0}
-          className="rounded-lg bg-white px-4 py-2 text-sm font-medium text-slate-950 disabled:opacity-60"
-        >
-          Sign in
-        </button>
+    <GuestFrame>
+      <form onSubmit={(event) => void onSubmit(event)} className="w-full">
+        <Panel>
+          <div className="space-y-4 p-6">
+            <PageHeader eyebrow="Sift" title="Recruiter sign-in" />
+            <label className="block space-y-2 text-sm text-mist">
+              <span>Password</span>
+              <input
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                autoComplete="current-password"
+                className={fieldClass}
+              />
+            </label>
+            {message ? <p className="text-sm text-mist">{message}</p> : null}
+            <button type="submit" disabled={busy || password.length === 0} className={buttonClass()}>
+              Sign in
+            </button>
+          </div>
+        </Panel>
       </form>
-    </main>
+    </GuestFrame>
   );
 }

@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from "react";
 
-import { SectionLinks } from "@/components/section-links";
+import { AppShell } from "@/components/ui/app-shell";
+import { PageHeader } from "@/components/ui/page-header";
+import { Panel } from "@/components/ui/panel";
 import { PublicJob, apiRequest } from "@/lib/api";
 
 export default function CareerDetailPage({ params }: { params: { versionId: string } }) {
@@ -30,34 +32,34 @@ export default function CareerDetailPage({ params }: { params: { versionId: stri
     : null;
 
   return (
-    <main className="min-h-screen bg-slate-950 px-6 py-10 text-slate-100">
+    <AppShell>
       <div className="mx-auto max-w-3xl space-y-6">
-        <SectionLinks />
-        {message ? <p className="text-sm text-slate-300">{message}</p> : null}
+        {message ? <p className="text-sm text-mist">{message}</p> : null}
         {job ? (
           <article className="space-y-4">
-            <p className="text-sm uppercase tracking-[0.2em] text-slate-400">{job.company_name}</p>
-            <h1 className="text-3xl font-semibold">{job.title}</h1>
-            <p className="text-sm text-slate-400">
+            <PageHeader eyebrow={job.company_name} title={job.title} />
+            <p className="text-sm text-mist">
               {job.seniority} · {job.contract} · {job.company_country} · {job.minimum_years}+ years
             </p>
-            <p className="whitespace-pre-wrap leading-7 text-slate-200">{job.description}</p>
-            <section className="space-y-2 rounded-xl border border-slate-800 bg-slate-900 p-4 text-sm">
-              <h2 className="text-base font-medium">Apply by email</h2>
-              <p>
-                Send your CV as a PDF or DOCX to <span className="text-white">{job.apply_email}</span>.
-              </p>
-              <p>
-                Subject: <span className="text-white">{job.apply_subject}</span>
-              </p>
-              <p className="text-slate-400">You can also put the job id {job.job_id} in the subject line.</p>
-            </section>
+            <p className="whitespace-pre-wrap leading-7 text-ivory">{job.description}</p>
+            <Panel>
+              <div className="space-y-2 p-4 text-sm">
+                <h2 className="text-base font-medium text-ivory">Apply by email</h2>
+                <p>
+                  Send your CV as a PDF or DOCX to <span className="text-ivory">{job.apply_email}</span>.
+                </p>
+                <p>
+                  Subject: <span className="text-ivory">{job.apply_subject}</span>
+                </p>
+                <p className="text-mist">You can also put the job id {job.job_id} in the subject line.</p>
+              </div>
+            </Panel>
             {structuredData ? (
               <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData) }} />
             ) : null}
           </article>
         ) : null}
       </div>
-    </main>
+    </AppShell>
   );
 }

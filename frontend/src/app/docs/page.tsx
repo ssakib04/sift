@@ -2,7 +2,10 @@
 
 import { FormEvent, useEffect, useState } from "react";
 
-import { SectionLinks } from "@/components/section-links";
+import { AppShell } from "@/components/ui/app-shell";
+import { buttonClass } from "@/components/ui/button";
+import { PageHeader } from "@/components/ui/page-header";
+import { Panel } from "@/components/ui/panel";
 import { ApiError, PolicyRecord, apiRequest } from "@/lib/api";
 
 export default function DocsPage() {
@@ -46,30 +49,37 @@ export default function DocsPage() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-950 px-6 py-10 text-slate-100">
+    <AppShell>
       <div className="mx-auto max-w-3xl space-y-8">
-        <SectionLinks />
-        <header className="space-y-2">
-          <p className="text-sm uppercase tracking-[0.2em] text-slate-400">Policies</p>
-          <h1 className="text-3xl font-semibold">Company policy index</h1>
-          <p className="text-slate-300">Upload a PDF or DOCX. The text is chunked and stored for job-description retrieval.</p>
-        </header>
-        <form onSubmit={onSubmit} className="space-y-4 rounded-xl border border-slate-800 bg-slate-900 p-5">
-          <input name="policy" type="file" accept=".pdf,.docx" className="block w-full text-sm" />
-          <button type="submit" disabled={busy} className="rounded-md bg-white px-4 py-2 text-sm font-medium text-slate-950 disabled:opacity-60">
-            {busy ? "Indexing..." : "Index policy"}
-          </button>
-          {message ? <p className="text-sm text-slate-300">{message}</p> : null}
+        <PageHeader
+          eyebrow="Policies"
+          title="Company policy index"
+          lede="Upload a PDF or DOCX. The text is chunked and stored for job-description retrieval."
+        />
+        <form onSubmit={onSubmit}>
+          <Panel>
+            <div className="space-y-4 p-5">
+              <input name="policy" type="file" accept=".pdf,.docx" className="block w-full text-sm text-mist" />
+              <button type="submit" disabled={busy} className={buttonClass()}>
+                {busy ? "Indexing..." : "Index policy"}
+              </button>
+              {message ? <p className="text-sm text-mist">{message}</p> : null}
+            </div>
+          </Panel>
         </form>
         <ul className="space-y-3">
           {policies.map((policy) => (
-            <li key={policy.id} className="rounded-xl border border-slate-800 px-4 py-3">
-              <p className="font-medium">{policy.filename}</p>
-              <p className="text-sm text-slate-400">{policy.chunk_count} chunks</p>
+            <li key={policy.id}>
+              <Panel>
+                <div className="px-4 py-3">
+                  <p className="font-medium text-ivory">{policy.filename}</p>
+                  <p className="text-sm text-mist">{policy.chunk_count} chunks</p>
+                </div>
+              </Panel>
             </li>
           ))}
         </ul>
       </div>
-    </main>
+    </AppShell>
   );
 }

@@ -18,15 +18,15 @@ export function SectionLinks() {
   const router = useRouter();
 
   return (
-    <nav className="flex flex-wrap gap-4 text-sm text-slate-300">
+    <nav className="flex flex-wrap gap-4 text-sm text-mist">
       {LINKS.map((link) => (
-        <Link key={link.href} href={link.href} className="hover:text-white">
+        <Link key={link.href} href={link.href} className="hover:text-ivory">
           {link.label}
         </Link>
       ))}
       <button
         type="button"
-        className="hover:text-white"
+        className="hover:text-ivory"
         onClick={() => {
           forgetRecruiter();
           router.push("/login");

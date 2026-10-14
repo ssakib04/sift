@@ -4,7 +4,10 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
-import { SectionLinks } from "@/components/section-links";
+import { AppShell } from "@/components/ui/app-shell";
+import { buttonClass } from "@/components/ui/button";
+import { PageHeader } from "@/components/ui/page-header";
+import { Panel } from "@/components/ui/panel";
 import { CandidateRecord, OpenedInterview, apiRequest, rememberInterview } from "@/lib/api";
 
 export default function CandidateProfilePage() {
@@ -42,47 +45,45 @@ export default function CandidateProfilePage() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-950 px-6 py-10 text-slate-100">
+    <AppShell>
       <div className="mx-auto max-w-3xl space-y-8">
-        <SectionLinks />
-        <Link href="/candidates" className="text-sm text-slate-400 hover:text-white">
+        <Link href="/candidates" className="text-sm text-mist hover:text-ivory">
           All candidates
         </Link>
-        {message ? <p className="text-sm text-slate-300">{message}</p> : null}
+        {message ? <p className="text-sm text-mist">{message}</p> : null}
         {candidate ? (
           <article className="space-y-6">
-            <header className="space-y-2">
-              <p className="text-sm uppercase tracking-[0.2em] text-slate-400">
-                {candidate.rank ? `Rank ${candidate.rank}` : "Unranked"}
-              </p>
-              <h1 className="text-3xl font-semibold">{candidate.full_name || "Unnamed"}</h1>
-              <p className="text-slate-300">{candidate.email}</p>
-              <p className="text-slate-300">Applied for {candidate.job_title || "an unpublished job"}</p>
-              <p className="text-slate-400">
+            <header className="space-y-3">
+              <PageHeader
+                eyebrow={candidate.rank ? `Rank ${candidate.rank}` : "Unranked"}
+                title={candidate.full_name || "Unnamed"}
+              />
+              <p className="text-mist">{candidate.email}</p>
+              <p className="text-mist">Applied for {candidate.job_title || "an unpublished job"}</p>
+              <p className="text-mist">
                 {candidate.aggregate_score !== null ? `Score ${candidate.aggregate_score.toFixed(2)}` : "No score"}
                 {candidate.invited ? " · invited" : ""}
               </p>
               {candidate.invited ? (
-                <button
-                  type="button"
-                  onClick={() => void joinInterview()}
-                  disabled={joining}
-                  className="rounded-lg bg-white px-4 py-2 text-sm font-medium text-slate-950 disabled:opacity-60"
-                >
+                <button type="button" onClick={() => void joinInterview()} disabled={joining} className={buttonClass()}>
                   Open interview
                 </button>
               ) : null}
             </header>
             <section className="space-y-3">
-              <h2 className="text-lg font-medium">Checklist</h2>
+              <h2 className="font-display text-2xl font-medium text-ivory">Checklist</h2>
               <ul className="space-y-2">
                 {candidate.evaluations.map((item) => (
-                  <li key={item.query_id} className="rounded-xl border border-slate-800 px-4 py-3 text-sm space-y-1">
-                    <p className="font-medium">
-                      {item.query_id} · {item.status.replaceAll("_", " ")}
-                    </p>
-                    {item.question ? <p className="text-slate-200">{item.question}</p> : null}
-                    {item.evidence ? <p className="text-slate-400">{item.evidence}</p> : null}
+                  <li key={item.query_id}>
+                    <Panel>
+                      <div className="space-y-1 px-4 py-3 text-sm">
+                        <p className="font-medium text-ivory">
+                          {item.query_id} · {item.status.replaceAll("_", " ")}
+                        </p>
+                        {item.question ? <p className="text-ivory">{item.question}</p> : null}
+                        {item.evidence ? <p className="text-mist">{item.evidence}</p> : null}
+                      </div>
+                    </Panel>
                   </li>
                 ))}
               </ul>
@@ -90,6 +91,6 @@ export default function CandidateProfilePage() {
           </article>
         ) : null}
       </div>
-    </main>
+    </AppShell>
   );
 }

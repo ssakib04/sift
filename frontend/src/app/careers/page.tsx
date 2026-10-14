@@ -3,7 +3,9 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-import { SectionLinks } from "@/components/section-links";
+import { AppShell } from "@/components/ui/app-shell";
+import { PageHeader } from "@/components/ui/page-header";
+import { Panel } from "@/components/ui/panel";
 import { PublicJob, apiRequest } from "@/lib/api";
 
 export default function CareersPage() {
@@ -19,27 +21,27 @@ export default function CareersPage() {
   }, []);
 
   return (
-    <main className="min-h-screen bg-slate-950 px-6 py-10 text-slate-100">
+    <AppShell>
       <div className="mx-auto max-w-3xl space-y-8">
-        <SectionLinks />
-        <header className="space-y-2">
-          <p className="text-sm uppercase tracking-[0.2em] text-slate-400">Careers</p>
-          <h1 className="text-3xl font-semibold">Open roles</h1>
-        </header>
-        {message ? <p className="text-sm text-slate-300">{message}</p> : null}
+        <PageHeader eyebrow="Careers" title="Open roles" />
+        {message ? <p className="text-sm text-mist">{message}</p> : null}
         <ul className="space-y-3">
           {jobs.map((job) => (
-            <li key={job.version_id} className="rounded-xl border border-slate-800 px-4 py-3">
-              <Link href={`/careers/${job.version_id}`} className="text-lg font-medium hover:underline">
-                {job.title}
-              </Link>
-              <p className="text-sm text-slate-400">
-                {job.seniority} · {job.contract} · {job.company_name}
-              </p>
+            <li key={job.version_id}>
+              <Panel>
+                <div className="px-4 py-3">
+                  <Link href={`/careers/${job.version_id}`} className="font-display text-2xl font-medium text-ivory hover:text-amber">
+                    {job.title}
+                  </Link>
+                  <p className="text-sm text-mist">
+                    {job.seniority} · {job.contract} · {job.company_name}
+                  </p>
+                </div>
+              </Panel>
             </li>
           ))}
         </ul>
       </div>
-    </main>
+    </AppShell>
   );
 }
