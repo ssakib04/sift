@@ -66,6 +66,7 @@ export type CandidateRecord = {
   full_name: string;
   rank: number | null;
   aggregate_score: number | null;
+  mcq_score: number | null;
   parse_status: string;
   parse_method: string;
   invited: boolean;
@@ -79,6 +80,62 @@ export type CandidateGroup = {
   job_title: string;
   mail_subject: string;
   candidates: CandidateRecord[];
+};
+
+export type AssessmentScores = {
+  cv_screening: number | null;
+  mcq_quiz: number | null;
+  interview_qa: number | null;
+  technical_dimension: number | null;
+  experience_dimension: number | null;
+  qualification_dimension: number | null;
+};
+
+export type AssessmentTrace = {
+  claim: string;
+  source_type: string;
+  source_reference: string;
+  evidence: string;
+};
+
+export type MasterAssessment = {
+  candidate_id: string;
+  full_name: string;
+  job_title: string;
+  overall_suitability: "strong_fit" | "moderate_fit" | "unsuited" | "insufficient_evidence";
+  suitability_label: string;
+  overall_score: number | null;
+  component_scores: AssessmentScores;
+  strengths: string[];
+  weaknesses: string[];
+  evidence_gaps: string[];
+  traceability: AssessmentTrace[];
+  narrative: string;
+  cv_weight: number;
+  mcq_weight: number;
+  interview_weight: number;
+};
+
+export type ComparisonRow = {
+  candidate_id: string;
+  full_name: string;
+  overall_score: number | null;
+  suitability_label: string;
+  technical_dimension: number | null;
+  experience_dimension: number | null;
+  qualification_dimension: number | null;
+  mcq_score: number | null;
+  interview_qa: number | null;
+  key_gap: string;
+};
+
+export type JobComparison = {
+  job_id: string;
+  job_title: string;
+  cv_weight: number;
+  mcq_weight: number;
+  interview_weight: number;
+  rows: ComparisonRow[];
 };
 
 export type InviteRecord = {
@@ -117,6 +174,7 @@ export type InterviewDetail = {
   consented_at: string | null;
   started_at: string | null;
   ended_at: string | null;
+  processing_status: string;
 };
 
 export type TranscriptTurn = {
@@ -146,13 +204,68 @@ export type CopilotAnswer = {
   profile_available: boolean;
 };
 
+export type QAPair = {
+  pair_id: string;
+  question: string;
+  answer: string;
+  intent: string;
+  citation: string;
+  query_ids: string[];
+  relevance: number;
+  technical_accuracy: number;
+  completeness: number;
+  articulation: number;
+};
+
+export type QAJustification = {
+  claim: string;
+  citation: string;
+};
+
 export type InterviewAnalysis = {
   relevance: number;
   technical_accuracy: number;
   completeness: number;
   articulation: number;
   gaps: string[];
+  discrepancies: string[];
   summary: string;
+  justifications: QAJustification[];
+  pairs: QAPair[];
+};
+
+export type QuizQuestion = {
+  question_id: string;
+  prompt: string;
+  options: string[];
+};
+
+export type QuizReviewItem = {
+  question_id: string;
+  prompt: string;
+  options: string[];
+  selected_index: number | null;
+  correct_index: number;
+  explanation: string;
+  correct: boolean;
+};
+
+export type CandidateQuiz = {
+  status: "in_progress" | "submitted";
+  seconds_remaining: number;
+  time_limit_seconds: number;
+  questions: QuizQuestion[];
+  review: QuizReviewItem[] | null;
+};
+
+export type RecruiterQuiz = {
+  candidate_id: string;
+  status: "not_started" | "in_progress" | "submitted";
+  score: number | null;
+  correct_count: number | null;
+  time_limit_seconds: number | null;
+  submitted_at: string | null;
+  review: QuizReviewItem[];
 };
 
 export type PolicyRecord = {
@@ -263,4 +376,25 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
     throw new ApiError(message || `Request failed (${response.status})`, code);
   }
   return (await response.json()) as T;
+}
+
+export async function downloadAssessmentReport(candidateId: string): Promise<void> {
+  const headers = new Headers();
+  const token = recruiterToken();
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+  const response = await fetch(`${apiBase()}/api/v1/candidates/${candidateId}/assessment/report`, { headers });
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { detail?: { message?: string } } | null;
+    const detail = payload?.detail;
+    throw new ApiError(detail?.message || `Request failed (${response.status})`);
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `assessment-${candidateId}.html`;
+  anchor.click();
+  URL.revokeObjectURL(url);
 }

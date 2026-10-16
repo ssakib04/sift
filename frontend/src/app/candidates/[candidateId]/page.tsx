@@ -8,14 +8,27 @@ import { AppShell } from "@/components/ui/app-shell";
 import { buttonClass } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/page-header";
 import { Panel } from "@/components/ui/panel";
-import { CandidateRecord, OpenedInterview, apiRequest, rememberInterview } from "@/lib/api";
+import { StatusPill } from "@/components/ui/status-pill";
+import {
+  ApiError,
+  CandidateRecord,
+  MasterAssessment,
+  OpenedInterview,
+  RecruiterQuiz,
+  apiRequest,
+  downloadAssessmentReport,
+  rememberInterview,
+} from "@/lib/api";
 
 export default function CandidateProfilePage() {
   const params = useParams<{ candidateId: string }>();
   const router = useRouter();
   const [candidate, setCandidate] = useState<CandidateRecord | null>(null);
+  const [quiz, setQuiz] = useState<RecruiterQuiz | null>(null);
+  const [assessment, setAssessment] = useState<MasterAssessment | null>(null);
   const [message, setMessage] = useState("");
   const [joining, setJoining] = useState(false);
+  const [building, setBuilding] = useState(false);
 
   useEffect(() => {
     apiRequest<CandidateRecord>(`/api/v1/candidates/${params.candidateId}`)
@@ -23,7 +36,37 @@ export default function CandidateProfilePage() {
       .catch((error: unknown) => {
         setMessage(error instanceof Error ? error.message : "Could not open this candidate.");
       });
+    apiRequest<RecruiterQuiz>(`/api/v1/candidates/${params.candidateId}/quiz`)
+      .then(setQuiz)
+      .catch(() => setQuiz(null));
+    apiRequest<MasterAssessment>(`/api/v1/candidates/${params.candidateId}/assessment`)
+      .then(setAssessment)
+      .catch((error: unknown) => {
+        if (error instanceof ApiError && error.code === "ASSESSMENT_NOT_FOUND") {
+          setAssessment(null);
+          return;
+        }
+        if (error instanceof ApiError && error.code === "CANDIDATE_NOT_FOUND") {
+          return;
+        }
+        setMessage(error instanceof Error ? error.message : "Could not load the master assessment.");
+      });
   }, [params.candidateId]);
+
+  async function buildAssessment() {
+    setBuilding(true);
+    setMessage("");
+    try {
+      const built = await apiRequest<MasterAssessment>(`/api/v1/candidates/${params.candidateId}/assessment`, {
+        method: "POST",
+      });
+      setAssessment(built);
+    } catch (error: unknown) {
+      setMessage(error instanceof Error ? error.message : "The master assessment could not be built.");
+    } finally {
+      setBuilding(false);
+    }
+  }
 
   async function joinInterview() {
     if (!candidate) {
@@ -62,6 +105,7 @@ export default function CandidateProfilePage() {
               <p className="text-mist">Applied for {candidate.job_title || "an unpublished job"}</p>
               <p className="text-mist">
                 {candidate.aggregate_score !== null ? `Score ${candidate.aggregate_score.toFixed(2)}` : "No score"}
+                {quiz?.status === "submitted" && quiz.score !== null ? ` · Quiz ${quiz.score} / 100` : ""}
                 {candidate.invited ? " · invited" : ""}
               </p>
               {candidate.invited ? (
@@ -70,6 +114,150 @@ export default function CandidateProfilePage() {
                 </button>
               ) : null}
             </header>
+            <section className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h2 className="font-display text-2xl font-medium text-ivory">Master assessment</h2>
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" onClick={() => void buildAssessment()} disabled={building} className={buttonClass()}>
+                    {building ? "Building" : assessment ? "Rebuild assessment" : "Build assessment"}
+                  </button>
+                  {assessment ? (
+                    <button
+                      type="button"
+                      onClick={() => void downloadAssessmentReport(candidate.id).catch((error: unknown) => {
+                        setMessage(error instanceof Error ? error.message : "The report could not be downloaded.");
+                      })}
+                      className={buttonClass("secondary")}
+                    >
+                      Download report
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+              {assessment ? (
+                <div className="space-y-3">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <StatusPill
+                      label={assessment.suitability_label}
+                      tone={
+                        assessment.overall_suitability === "strong_fit"
+                          ? "locked"
+                          : assessment.overall_suitability === "moderate_fit"
+                            ? "draft"
+                            : assessment.overall_suitability === "unsuited"
+                              ? "attention"
+                              : "neutral"
+                      }
+                    />
+                    <p className="text-sm text-ivory">
+                      {assessment.overall_score !== null ? `Overall ${assessment.overall_score.toFixed(1)}` : "Overall not calculated"}
+                    </p>
+                    <p className="text-sm text-mist">
+                      CV {Math.round(assessment.cv_weight * 100)}% · Quiz {Math.round(assessment.mcq_weight * 100)}% · Interview{" "}
+                      {Math.round(assessment.interview_weight * 100)}%
+                    </p>
+                  </div>
+                  <Panel>
+                    <dl className="grid gap-2 px-4 py-3 text-sm sm:grid-cols-3">
+                      <div>
+                        <dt className="text-mist">CV screening</dt>
+                        <dd className="text-ivory">{assessment.component_scores.cv_screening?.toFixed(1) ?? "—"}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-mist">MCQ quiz</dt>
+                        <dd className="text-ivory">{assessment.component_scores.mcq_quiz?.toFixed(1) ?? "—"}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-mist">Interview Q&A</dt>
+                        <dd className="text-ivory">{assessment.component_scores.interview_qa?.toFixed(1) ?? "—"}</dd>
+                      </div>
+                    </dl>
+                  </Panel>
+                  <p className="text-sm leading-6 text-ivory">{assessment.narrative}</p>
+                  {assessment.strengths.length ? (
+                    <div>
+                      <h3 className="text-sm font-semibold text-ivory">Strengths</h3>
+                      <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-mist">
+                        {assessment.strengths.map((item) => (
+                          <li key={item}>{item}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                  {assessment.weaknesses.length ? (
+                    <div>
+                      <h3 className="text-sm font-semibold text-ivory">Weaknesses</h3>
+                      <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-mist">
+                        {assessment.weaknesses.map((item) => (
+                          <li key={item}>{item}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                  {assessment.evidence_gaps.length ? (
+                    <div>
+                      <h3 className="text-sm font-semibold text-ivory">Evidence gaps</h3>
+                      <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-mist">
+                        {assessment.evidence_gaps.map((item) => (
+                          <li key={item}>{item}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                  {assessment.traceability.length ? (
+                    <ul className="space-y-2">
+                      {assessment.traceability.map((item) => (
+                        <li key={`${item.source_type}-${item.source_reference}`}>
+                          <Panel>
+                            <div className="space-y-1 px-4 py-3 text-sm">
+                              <p className="font-medium text-ivory">{item.claim}</p>
+                              <p className="text-mist">
+                                {item.source_type} · {item.source_reference}
+                              </p>
+                              <p className="text-mist">{item.evidence}</p>
+                            </div>
+                          </Panel>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
+              ) : (
+                <p className="text-sm text-mist">
+                  Build the report from the CV screening snapshot, the submitted quiz score, and the post-call Q&A analysis.
+                </p>
+              )}
+            </section>
+            <section className="space-y-3">
+              <h2 className="font-display text-2xl font-medium text-ivory">Skill quiz</h2>
+              {quiz?.status === "submitted" && quiz.score !== null ? (
+                <div className="space-y-2">
+                  <p className="text-sm text-ivory">Score {quiz.score} / 100</p>
+                  <ul className="space-y-2">
+                    {quiz.review.map((item) => (
+                      <li key={item.question_id}>
+                        <Panel>
+                          <div className="space-y-1 px-4 py-3 text-sm">
+                            <p className="font-medium text-ivory">{item.prompt}</p>
+                            <p className="text-mist">
+                              {item.correct ? "Correct" : "Incorrect"}
+                              {item.selected_index !== null && item.options[item.selected_index]
+                                ? ` · ${item.options[item.selected_index]}`
+                                : " · no answer"}
+                            </p>
+                            <p className="text-mist">{item.explanation}</p>
+                          </div>
+                        </Panel>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : (
+                <p className="text-sm text-mist">
+                  {quiz?.status === "in_progress" ? "The skill quiz is in progress." : "No skill quiz yet."}
+                </p>
+              )}
+            </section>
             <section className="space-y-3">
               <h2 className="font-display text-2xl font-medium text-ivory">Checklist</h2>
               <ul className="space-y-2">

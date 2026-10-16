@@ -41,8 +41,8 @@ def start_clock(clock: SessionClock, *, consent: bool, now: datetime) -> Session
 def end_clock(clock: SessionClock, *, now: datetime) -> SessionClock:
     if clock.status == "ended":
         return clock
-    if clock.status != "started":
-        raise InterviewError("SESSION_NOT_STARTED", "The interview has not started.", 409)
+    if clock.status not in {"invited", "started"}:
+        raise InterviewError("SESSION_NOT_FOUND", "This interview session is not available.", 404)
     return SessionClock(
         status="ended",
         consented_at=clock.consented_at,

@@ -50,6 +50,16 @@ class Candidate(Base):
         cascade="all, delete-orphan",
         uselist=False,
     )
+    quiz_attempt: Mapped["McqAttempt | None"] = relationship(
+        back_populates="candidate",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+    consolidated_assessment: Mapped["ConsolidatedAssessment | None"] = relationship(
+        back_populates="candidate",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
 
 
 class CandidateDocument(Base):
@@ -217,12 +227,181 @@ class InterviewAnalysis(Base):
     completeness: Mapped[float] = mapped_column(Float)
     articulation: Mapped[float] = mapped_column(Float)
     gaps: Mapped[list[str]] = mapped_column(JSON)
+    discrepancies: Mapped[list[str]] = mapped_column(JSON, default=list)
     summary: Mapped[str] = mapped_column(Text)
+    justifications: Mapped[list[dict[str, str]]] = mapped_column(JSON, default=list)
     llm_tier: Mapped[str] = mapped_column(String(32))
     fallback_used: Mapped[bool]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
     session: Mapped[InterviewSession] = relationship(back_populates="analysis")
+    pairs: Mapped[list["QAPair"]] = relationship(
+        back_populates="analysis",
+        cascade="all, delete-orphan",
+    )
+
+
+class QAPair(Base):
+    __tablename__ = "qa_pairs"
+    __table_args__ = (UniqueConstraint("analysis_id", "pair_id", name="uq_analysis_pair_id"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    analysis_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("interview_analyses.id", ondelete="CASCADE"),
+        index=True,
+    )
+    pair_id: Mapped[str] = mapped_column(String(16))
+    sequence: Mapped[int] = mapped_column(Integer)
+    question: Mapped[str] = mapped_column(Text)
+    answer: Mapped[str] = mapped_column(Text)
+    intent: Mapped[str] = mapped_column(String(32))
+    start_time: Mapped[float] = mapped_column(Float)
+    end_time: Mapped[float] = mapped_column(Float)
+    citation: Mapped[str] = mapped_column(String(80))
+    query_ids: Mapped[list[str]] = mapped_column(JSON)
+    relevance: Mapped[float] = mapped_column(Float)
+    technical_accuracy: Mapped[float] = mapped_column(Float)
+    completeness: Mapped[float] = mapped_column(Float)
+    articulation: Mapped[float] = mapped_column(Float)
+    notes: Mapped[dict[str, str]] = mapped_column(JSON)
+
+    analysis: Mapped[InterviewAnalysis] = relationship(back_populates="pairs")
+
+
+class McqAttempt(Base):
+    __tablename__ = "mcq_attempts"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    candidate_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("candidates.id", ondelete="CASCADE"),
+        unique=True,
+    )
+    job_version_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("job_versions.id", ondelete="CASCADE"),
+        index=True,
+    )
+    questions: Mapped[list[dict[str, object]]] = mapped_column(JSON)
+    answers: Mapped[list[int | None] | None] = mapped_column(JSON, nullable=True)
+    correct_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    time_limit_seconds: Mapped[int] = mapped_column(Integer)
+    llm_tier: Mapped[str] = mapped_column(String(32))
+    fallback_used: Mapped[bool]
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    candidate: Mapped[Candidate] = relationship(back_populates="quiz_attempt")
+
+
+class ConsolidatedAssessment(Base):
+    __tablename__ = "consolidated_assessments"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    candidate_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("candidates.id", ondelete="CASCADE"),
+        unique=True,
+    )
+    job_version_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("job_versions.id", ondelete="CASCADE"),
+        index=True,
+    )
+    overall_suitability: Mapped[str] = mapped_column(String(32))
+    overall_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    narrative: Mapped[str] = mapped_column(Text)
+    cv_weight: Mapped[float] = mapped_column(Float)
+    mcq_weight: Mapped[float] = mapped_column(Float)
+    interview_weight: Mapped[float] = mapped_column(Float)
+    llm_tier: Mapped[str] = mapped_column(String(32))
+    fallback_used: Mapped[bool]
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    candidate: Mapped[Candidate] = relationship(back_populates="consolidated_assessment")
+    component_scores: Mapped[list["AssessmentComponentScore"]] = relationship(
+        back_populates="assessment",
+        cascade="all, delete-orphan",
+    )
+    strengths: Mapped[list["AssessmentStrength"]] = relationship(
+        back_populates="assessment",
+        cascade="all, delete-orphan",
+    )
+    weaknesses: Mapped[list["AssessmentWeakness"]] = relationship(
+        back_populates="assessment",
+        cascade="all, delete-orphan",
+    )
+    evidence_links: Mapped[list["EvidenceLink"]] = relationship(
+        back_populates="assessment",
+        cascade="all, delete-orphan",
+    )
+
+
+class AssessmentComponentScore(Base):
+    __tablename__ = "assessment_component_scores"
+    __table_args__ = (UniqueConstraint("assessment_id", "component", name="uq_assessment_component"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    assessment_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("consolidated_assessments.id", ondelete="CASCADE"),
+        index=True,
+    )
+    component: Mapped[str] = mapped_column(String(32))
+    score: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    assessment: Mapped[ConsolidatedAssessment] = relationship(back_populates="component_scores")
+
+
+class AssessmentStrength(Base):
+    __tablename__ = "assessment_strengths"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    assessment_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("consolidated_assessments.id", ondelete="CASCADE"),
+        index=True,
+    )
+    sequence: Mapped[int] = mapped_column(Integer)
+    text: Mapped[str] = mapped_column(Text)
+
+    assessment: Mapped[ConsolidatedAssessment] = relationship(back_populates="strengths")
+
+
+class AssessmentWeakness(Base):
+    __tablename__ = "assessment_weaknesses"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    assessment_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("consolidated_assessments.id", ondelete="CASCADE"),
+        index=True,
+    )
+    sequence: Mapped[int] = mapped_column(Integer)
+    text: Mapped[str] = mapped_column(Text)
+
+    assessment: Mapped[ConsolidatedAssessment] = relationship(back_populates="weaknesses")
+
+
+class EvidenceLink(Base):
+    __tablename__ = "evidence_links"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    assessment_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("consolidated_assessments.id", ondelete="CASCADE"),
+        index=True,
+    )
+    sequence: Mapped[int] = mapped_column(Integer)
+    claim: Mapped[str] = mapped_column(Text)
+    source_type: Mapped[str] = mapped_column(String(32))
+    source_reference: Mapped[str] = mapped_column(String(80))
+    evidence: Mapped[str] = mapped_column(Text)
+
+    assessment: Mapped[ConsolidatedAssessment] = relationship(back_populates="evidence_links")
 
 
 class IntakeMessage(Base):

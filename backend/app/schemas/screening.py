@@ -19,6 +19,7 @@ class CandidateRead(BaseModel):
     full_name: str
     rank: int | None
     aggregate_score: float | None
+    mcq_score: int | None = None
     must_have_ratio: float | None
     parse_status: str
     parse_method: str

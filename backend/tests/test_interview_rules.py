@@ -38,11 +38,12 @@ def test_start_requires_consent_and_is_idempotent() -> None:
     assert again.started_at == now
 
 
-def test_end_waits_for_start_and_stays_ended() -> None:
+def test_end_closes_an_open_room_and_stays_ended() -> None:
     now = datetime(2026, 10, 12, 9, 30, tzinfo=UTC)
-    with pytest.raises(InterviewError) as early:
-        end_clock(_clock(), now=now)
-    assert early.value.code == "SESSION_NOT_STARTED"
+    waiting = end_clock(_clock(), now=now)
+    assert waiting.status == "ended"
+    assert waiting.started_at is None
+    assert waiting.processing_status == "pending"
     started = start_clock(_clock(), consent=True, now=now)
     ended = end_clock(started, now=now)
     assert ended.status == "ended"

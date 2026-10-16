@@ -46,6 +46,7 @@ class SessionDetailRead(BaseModel):
     consented_at: datetime | None
     started_at: datetime | None
     ended_at: datetime | None
+    processing_status: str = ""
 
 
 class SessionStatusRead(BaseModel):
@@ -87,12 +88,33 @@ class CopilotAskRead(BaseModel):
     profile_available: bool
 
 
+class QAPairRead(BaseModel):
+    pair_id: str
+    question: str
+    answer: str
+    intent: str
+    citation: str
+    query_ids: list[str]
+    relevance: float
+    technical_accuracy: float
+    completeness: float
+    articulation: float
+
+
+class JustificationRead(BaseModel):
+    claim: str
+    citation: str
+
+
 class AnalysisRead(BaseModel):
     relevance: float
     technical_accuracy: float
     completeness: float
     articulation: float
     gaps: list[str]
+    discrepancies: list[str]
     summary: str
+    justifications: list[JustificationRead]
+    pairs: list[QAPairRead]
     llm_tier: str
     fallback_used: bool

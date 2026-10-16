@@ -18,8 +18,10 @@ def test_unscored_candidate_is_listed_without_a_rank() -> None:
     candidate.parse_result = None
     candidate.snapshot = None
     candidate.magic_link = None
+    candidate.quiz_attempt = None
     listed = _to_candidate_read(candidate)
     assert listed.rank is None
+    assert listed.mcq_score is None
     assert listed.invited is False
     assert listed.email == "ada@example.com"
     assert listed.evaluations == []

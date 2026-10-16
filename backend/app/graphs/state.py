@@ -46,14 +46,40 @@ class JobCreationState(TypedDict, total=False):
 
 
 class QAAnalysisState(TypedDict, total=False):
-    transcript: str
-    checklist: list[str]
+    turns: list[dict[str, object]]
+    checklist: list[dict[str, str]]
+    pairs: list[dict[str, object]]
+    relevance_by_pair: dict[str, dict[str, object]]
+    technical_accuracy_by_pair: dict[str, dict[str, object]]
+    completeness_by_pair: dict[str, dict[str, object]]
+    articulation_by_pair: dict[str, dict[str, object]]
     relevance: float
     technical_accuracy: float
     completeness: float
     articulation: float
     gaps: list[str]
+    discrepancies: list[str]
     summary: str
+    justifications: list[dict[str, str]]
+    llm_tier: str
+    fallback_used: bool
+    tier_notes: Annotated[list[str], operator.add]
+    fallback_flags: Annotated[list[bool], operator.add]
+
+
+class MasterAssessmentState(TypedDict, total=False):
+    candidate_id: str
+    cv_screening: dict[str, object] | None
+    mcq_score: int | None
+    qa_analysis: dict[str, object] | None
+    component_scores: dict[str, float | None]
+    strengths: list[str]
+    weaknesses: list[str]
+    evidence_gaps: list[str]
+    overall_score: float | None
+    overall_suitability: str
+    traceability: list[dict[str, str]]
+    narrative: str
     llm_tier: str
     fallback_used: bool
     tier_notes: Annotated[list[str], operator.add]

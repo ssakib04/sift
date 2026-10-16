@@ -2,7 +2,6 @@ import { FormEvent, useState } from "react";
 
 import { buttonClass } from "@/components/ui/button";
 import { fieldClass } from "@/components/ui/field";
-import { Panel } from "@/components/ui/panel";
 import { CopilotAnswer, InterviewCopilot } from "@/lib/api";
 
 export function InCallCopilot({
@@ -29,12 +28,11 @@ export function InCallCopilot({
   }
 
   return (
-    <Panel>
-      <div className="space-y-3 p-5">
-      <h2 className="font-display text-2xl font-medium text-ivory">In-call copilot</h2>
+    <div className="flex h-full min-h-0 flex-col gap-3">
+      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1 text-sm">
       {profileMissing ? <p className="text-sm text-mist">No CV is stored for this person.</p> : null}
       {copilot ? (
-        <div className="space-y-3 text-sm">
+        <div className="space-y-3">
           <div>
             <p className="text-mist">Explored</p>
             <ul className="list-disc pl-5 text-ivory">
@@ -58,19 +56,10 @@ export function InCallCopilot({
           ) : null}
         </div>
       ) : (
-        <p className="text-sm text-mist">The copilot updates as the transcript grows.</p>
+        <p className="text-sm text-mist">Questions appear as the transcript grows.</p>
       )}
-      <form className="space-y-2" onSubmit={submit}>
-        <label className="block text-sm text-mist" htmlFor="copilot-ask">
-          Ask for questions from the CV and what has already been said
-        </label>
-        <textarea id="copilot-ask" value={question} onChange={(event) => setQuestion(event.target.value)} rows={3} className={fieldClass} />
-        <button type="submit" disabled={asking || question.trim().length === 0} className={buttonClass("secondary")}>
-          {asking ? "Asking" : "Ask"}
-        </button>
-      </form>
       {reply ? (
-        <div className="space-y-2 text-sm">
+        <div className="space-y-2">
           <p className="text-ivory">{reply.reply}</p>
           {reply.questions.length > 0 ? (
             <ul className="list-disc pl-5 text-ivory">
@@ -82,6 +71,15 @@ export function InCallCopilot({
         </div>
       ) : null}
       </div>
-    </Panel>
+      <form className="space-y-2" onSubmit={submit}>
+        <label className="block text-sm text-mist" htmlFor="copilot-ask">
+          Ask for the next question
+        </label>
+        <textarea id="copilot-ask" value={question} onChange={(event) => setQuestion(event.target.value)} rows={2} className={fieldClass} />
+        <button type="submit" disabled={asking || question.trim().length === 0} className={buttonClass("secondary")}>
+          {asking ? "Asking" : "Ask"}
+        </button>
+      </form>
+    </div>
   );
 }

@@ -13,6 +13,8 @@ from app.core.llm_fallback import FallbackLLMManager
 from app.core.session_tokens import InvalidSessionToken, SessionClaims, decode_session_token
 from app.schemas.interview import (
     AnalysisRead,
+    JustificationRead,
+    QAPairRead,
     CandidateOpenRequest,
     CopilotAskRead,
     CopilotAskRequest,
@@ -178,6 +180,7 @@ async def read_session(
         consented_at=detail.consented_at,
         started_at=detail.started_at,
         ended_at=detail.ended_at,
+        processing_status=detail.processing_status,
     )
 
 
@@ -334,7 +337,28 @@ async def read_session_analysis(
         completeness=analysis.completeness,
         articulation=analysis.articulation,
         gaps=list(analysis.gaps or []),
+        discrepancies=list(analysis.discrepancies or []),
         summary=analysis.summary,
+        justifications=[
+            JustificationRead(claim=str(item.get("claim") or ""), citation=str(item.get("citation") or ""))
+            for item in analysis.justifications or []
+            if isinstance(item, dict)
+        ],
+        pairs=[
+            QAPairRead(
+                pair_id=pair.pair_id,
+                question=pair.question,
+                answer=pair.answer,
+                intent=pair.intent,
+                citation=pair.citation,
+                query_ids=list(pair.query_ids or []),
+                relevance=pair.relevance,
+                technical_accuracy=pair.technical_accuracy,
+                completeness=pair.completeness,
+                articulation=pair.articulation,
+            )
+            for pair in sorted(analysis.pairs, key=lambda item: item.sequence)
+        ],
         llm_tier=analysis.llm_tier,
         fallback_used=analysis.fallback_used,
     )

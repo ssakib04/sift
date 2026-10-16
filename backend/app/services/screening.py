@@ -237,6 +237,7 @@ async def list_ranked_candidates(session: AsyncSession, job_id: uuid.UUID) -> li
             selectinload(Candidate.parse_result),
             selectinload(Candidate.snapshot).selectinload(ScoreSnapshot.evaluations),
             selectinload(Candidate.magic_link),
+            selectinload(Candidate.quiz_attempt),
             selectinload(Candidate.version).selectinload(JobVersion.queries),
         )
     )
@@ -273,6 +274,7 @@ async def get_candidate(session: AsyncSession, candidate_id: uuid.UUID) -> Candi
             selectinload(Candidate.parse_result),
             selectinload(Candidate.snapshot).selectinload(ScoreSnapshot.evaluations),
             selectinload(Candidate.magic_link),
+            selectinload(Candidate.quiz_attempt),
             selectinload(Candidate.version).selectinload(JobVersion.job),
             selectinload(Candidate.version).selectinload(JobVersion.queries),
         )
@@ -458,6 +460,11 @@ def _to_candidate_read(
         full_name=candidate.full_name,
         rank=snapshot.rank if snapshot is not None else None,
         aggregate_score=snapshot.aggregate_score if snapshot is not None else None,
+        mcq_score=(
+            candidate.quiz_attempt.score
+            if candidate.quiz_attempt is not None and candidate.quiz_attempt.submitted_at is not None
+            else None
+        ),
         must_have_ratio=snapshot.must_have_ratio if snapshot is not None else None,
         parse_status=parse_result.status if parse_result is not None else "pending",
         parse_method=parse_result.parse_method if parse_result is not None else "",

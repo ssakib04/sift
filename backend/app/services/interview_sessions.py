@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import uuid
 from dataclasses import dataclass
@@ -16,6 +17,7 @@ from app.models.candidate import (
     InterviewAnalysis,
     InterviewSession,
     MagicLink,
+    QAPair,
     TranscriptSegment,
 )
 from app.models.job import JobChecklistQuery, JobVersion
@@ -72,6 +74,7 @@ class SessionDetail:
     consented_at: datetime | None
     started_at: datetime | None
     ended_at: datetime | None
+    processing_status: str
 
 
 async def open_candidate_session(
@@ -130,6 +133,7 @@ async def session_detail(db: AsyncSession, settings: Settings, claims: SessionCl
         consented_at=row.consented_at,
         started_at=row.started_at,
         ended_at=row.ended_at,
+        processing_status=row.processing_status or "",
     )
 
 
@@ -154,22 +158,9 @@ async def end_interview(db: AsyncSession, llm: FallbackLLMManager, claims: Sessi
         return row.status
     clock = end_for_role(claims.role, _clock(row), now=datetime.now(UTC))
     await _finalize_open_lines(db, row.id)
-    segments = await _segment_rows(db, row.id)
-    questions = await _questions(db, row.job_version_id)
-    try:
-        draft = await draft_for_transcript(llm, questions, format_transcript(_lines(segments)))
-        failed = False
-    except Exception as exc:
-        draft = None
-        failed = True
-        _log_analysis_failure(exc)
     _apply_clock(row, clock)
-    if failed or draft is None:
-        row.processing_status = "failed"
-    else:
-        await _save_analysis(db, row, draft)
-        row.processing_status = "complete"
     await db.commit()
+    _schedule_analysis(row.id, llm)
     return row.status
 
 
@@ -227,7 +218,11 @@ async def ask_interview_copilot(
 async def read_analysis(db: AsyncSession, claims: SessionClaims) -> InterviewAnalysis | None:
     assert_recruiter(claims.role)
     row, _title, _job_id = await _require(db, claims)
-    return await db.scalar(select(InterviewAnalysis).where(InterviewAnalysis.session_id == row.id))
+    return await db.scalar(
+        select(InterviewAnalysis)
+        .where(InterviewAnalysis.session_id == row.id)
+        .options(selectinload(InterviewAnalysis.pairs))
+    )
 
 
 async def save_spoken_line(session_id: str, speaker: str, text: str, *, final: bool = True) -> TranscriptSegment | None:
@@ -412,33 +407,91 @@ async def _profile_text(db: AsyncSession, candidate: Candidate) -> str:
 
 
 async def _questions(db: AsyncSession, version_id: uuid.UUID) -> list[str]:
-    result = await db.scalars(
-        select(JobChecklistQuery)
-        .where(JobChecklistQuery.version_id == version_id)
-        .order_by(JobChecklistQuery.query_id)
-    )
-    return [query.question for query in result.all()]
+    return [item["question"] for item in await _checklist_items(db, version_id)]
+
+
+async def _checklist_items(db: AsyncSession, version_id: uuid.UUID) -> list[dict[str, str]]:
+    result = await db.scalars(select(JobChecklistQuery).where(JobChecklistQuery.version_id == version_id))
+    rows = list(result.all())
+    rows.sort(key=lambda query: int(query.query_id[1:]) if query.query_id[1:].isdigit() else 0)
+    return [{"query_id": query.query_id, "question": query.question} for query in rows]
 
 
 async def _save_analysis(db: AsyncSession, row: InterviewSession, draft: AnalysisDraft) -> None:
     existing = await db.scalar(select(InterviewAnalysis).where(InterviewAnalysis.session_id == row.id))
     if existing is not None:
         return
-    db.add(
-        InterviewAnalysis(
-            id=uuid.uuid4(),
-            session_id=row.id,
-            relevance=draft.relevance,
-            technical_accuracy=draft.technical_accuracy,
-            completeness=draft.completeness,
-            articulation=draft.articulation,
-            gaps=draft.gaps,
-            summary=draft.summary,
-            llm_tier=draft.llm_tier,
-            fallback_used=draft.fallback_used,
-            created_at=datetime.now(UTC),
-        )
+    analysis = InterviewAnalysis(
+        id=uuid.uuid4(),
+        session_id=row.id,
+        relevance=draft.relevance,
+        technical_accuracy=draft.technical_accuracy,
+        completeness=draft.completeness,
+        articulation=draft.articulation,
+        gaps=draft.gaps,
+        discrepancies=draft.discrepancies,
+        summary=draft.summary,
+        justifications=[{"claim": item.claim, "citation": item.citation} for item in draft.justifications],
+        llm_tier=draft.llm_tier,
+        fallback_used=draft.fallback_used,
+        created_at=datetime.now(UTC),
     )
+    db.add(analysis)
+    await db.flush()
+    for pair in draft.pairs:
+        db.add(
+            QAPair(
+                id=uuid.uuid4(),
+                analysis_id=analysis.id,
+                pair_id=pair.pair_id,
+                sequence=pair.sequence,
+                question=pair.question,
+                answer=pair.answer,
+                intent=pair.intent,
+                start_time=pair.start_time,
+                end_time=pair.end_time,
+                citation=pair.citation,
+                query_ids=pair.query_ids,
+                relevance=pair.relevance,
+                technical_accuracy=pair.technical_accuracy,
+                completeness=pair.completeness,
+                articulation=pair.articulation,
+                notes=pair.notes,
+            )
+        )
+
+
+_analysis_tasks: set[asyncio.Task[None]] = set()
+
+
+def _schedule_analysis(session_id: uuid.UUID, llm: FallbackLLMManager) -> None:
+    task = asyncio.create_task(_analyze_after_end(session_id, llm))
+    _analysis_tasks.add(task)
+    task.add_done_callback(_analysis_tasks.discard)
+
+
+async def _analyze_after_end(session_id: uuid.UUID, llm: FallbackLLMManager) -> None:
+    """Score the transcript after the call has already closed."""
+    from app.core.database import SessionFactory
+
+    async with SessionFactory() as db:
+        row = await db.get(InterviewSession, session_id)
+        if row is None or row.processing_status == "complete":
+            return
+        segments = await _segment_rows(db, row.id)
+        checklist = await _checklist_items(db, row.job_version_id)
+        turns = [
+            {"speaker": segment.speaker, "start": segment.start_time, "end": segment.end_time, "text": segment.text}
+            for segment in segments
+        ]
+        try:
+            draft = await draft_for_transcript(llm, checklist, turns)
+            await _save_analysis(db, row, draft)
+            row.processing_status = "complete"
+        except Exception as exc:
+            _log_analysis_failure(exc)
+            row.processing_status = "failed"
+        await db.commit()
 
 
 def _log_analysis_failure(exc: Exception) -> None:
