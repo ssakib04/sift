@@ -21,6 +21,7 @@ from app.models.candidate import (
     TranscriptSegment,
 )
 from app.models.job import JobChecklistQuery, JobVersion
+from app.services.cv_claims import verify_stored_claims
 from app.services.interview_analysis import AnalysisDraft, draft_for_transcript
 from app.services.interview_livekit import dispatch_transcriber, issue_livekit_token
 from app.services.interview_transcript import TranscriptWrite, accepted_speaker, spoken_window, transcript_write
@@ -75,6 +76,7 @@ class SessionDetail:
     started_at: datetime | None
     ended_at: datetime | None
     processing_status: str
+    biometric_consented_at: datetime | None
 
 
 async def open_candidate_session(
@@ -134,14 +136,30 @@ async def session_detail(db: AsyncSession, settings: Settings, claims: SessionCl
         started_at=row.started_at,
         ended_at=row.ended_at,
         processing_status=row.processing_status or "",
+        biometric_consented_at=row.biometric_consented_at,
     )
 
 
-async def start_interview(db: AsyncSession, claims: SessionClaims, *, consent: bool) -> str:
+async def start_interview(
+    db: AsyncSession,
+    claims: SessionClaims,
+    *,
+    consent: bool,
+    biometric_consent: bool = False,
+) -> str:
     row, _title, _job_id = await _require(db, claims)
     previous = row.status
     clock = start_clock(_clock(row), consent=consent, now=datetime.now(UTC))
     _apply_clock(row, clock)
+    if biometric_consent:
+        if claims.role != "candidate":
+            raise InterviewError(
+                "INTERVIEW_FORBIDDEN",
+                "Only the candidate can agree to face identification.",
+                403,
+            )
+        if row.biometric_consented_at is None:
+            row.biometric_consented_at = datetime.now(UTC)
     await db.commit()
     if previous != "started" and row.status == "started":
         try:
@@ -491,6 +509,10 @@ async def _analyze_after_end(session_id: uuid.UUID, llm: FallbackLLMManager) -> 
         except Exception as exc:
             _log_analysis_failure(exc)
             row.processing_status = "failed"
+        try:
+            await verify_stored_claims(db, llm, row, segments)
+        except Exception:
+            logger.warning("claim_verification_failed")
         await db.commit()
 
 

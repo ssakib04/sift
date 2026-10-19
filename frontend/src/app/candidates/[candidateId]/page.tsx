@@ -12,6 +12,7 @@ import { StatusPill } from "@/components/ui/status-pill";
 import {
   ApiError,
   CandidateRecord,
+  ClaimVerification,
   MasterAssessment,
   OpenedInterview,
   RecruiterQuiz,
@@ -26,9 +27,11 @@ export default function CandidateProfilePage() {
   const [candidate, setCandidate] = useState<CandidateRecord | null>(null);
   const [quiz, setQuiz] = useState<RecruiterQuiz | null>(null);
   const [assessment, setAssessment] = useState<MasterAssessment | null>(null);
+  const [claims, setClaims] = useState<ClaimVerification | null>(null);
   const [message, setMessage] = useState("");
   const [joining, setJoining] = useState(false);
   const [building, setBuilding] = useState(false);
+  const [checking, setChecking] = useState(false);
 
   useEffect(() => {
     apiRequest<CandidateRecord>(`/api/v1/candidates/${params.candidateId}`)
@@ -39,6 +42,15 @@ export default function CandidateProfilePage() {
     apiRequest<RecruiterQuiz>(`/api/v1/candidates/${params.candidateId}/quiz`)
       .then(setQuiz)
       .catch(() => setQuiz(null));
+    apiRequest<ClaimVerification>(`/api/v1/candidates/${params.candidateId}/claim-verification`)
+      .then(setClaims)
+      .catch((error: unknown) => {
+        if (error instanceof ApiError && (error.code === "CLAIM_CHECK_NOT_FOUND" || error.code === "CANDIDATE_NOT_FOUND")) {
+          setClaims(null);
+          return;
+        }
+        setMessage(error instanceof Error ? error.message : "Could not load the CV follow-up prompts.");
+      });
     apiRequest<MasterAssessment>(`/api/v1/candidates/${params.candidateId}/assessment`)
       .then(setAssessment)
       .catch((error: unknown) => {
@@ -65,6 +77,21 @@ export default function CandidateProfilePage() {
       setMessage(error instanceof Error ? error.message : "The master assessment could not be built.");
     } finally {
       setBuilding(false);
+    }
+  }
+
+  async function checkClaims() {
+    setChecking(true);
+    setMessage("");
+    try {
+      const checked = await apiRequest<ClaimVerification>(`/api/v1/candidates/${params.candidateId}/claim-verification`, {
+        method: "POST",
+      });
+      setClaims(checked);
+    } catch (error: unknown) {
+      setMessage(error instanceof Error ? error.message : "The CV claims could not be checked.");
+    } finally {
+      setChecking(false);
     }
   }
 
@@ -226,6 +253,60 @@ export default function CandidateProfilePage() {
                 <p className="text-sm text-mist">
                   Build the report from the CV screening snapshot, the submitted quiz score, and the post-call Q&A analysis.
                 </p>
+              )}
+            </section>
+            <section className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h2 className="font-display text-2xl font-medium text-ivory">CV follow-up</h2>
+                <button type="button" onClick={() => void checkClaims()} disabled={checking} className={buttonClass("secondary")}>
+                  {checking ? "Checking" : "Check CV claims"}
+                </button>
+              </div>
+              <p className="text-sm text-mist">
+                Prompts for a follow-up conversation. A prompt asks for more detail. It does not reject the candidate or change the score.
+              </p>
+              {claims ? (
+                <div className="space-y-4">
+                  {claims.supported_count > 0 ? (
+                    <p className="text-sm text-ivory">
+                      {claims.supported_count} CV {claims.supported_count === 1 ? "claim matches" : "claims match"} what the candidate said.
+                    </p>
+                  ) : null}
+                  {claims.flags.length ? (
+                    (["contradiction", "unverified", "not_discussed"] as const).map((status) => {
+                      const group = claims.flags.filter((flag) => flag.status === status);
+                      if (!group.length) {
+                        return null;
+                      }
+                      const title =
+                        status === "contradiction" ? "Contradiction" : status === "unverified" ? "Unverified" : "Not discussed";
+                      const tone = status === "contradiction" ? "attention" : status === "unverified" ? "draft" : "neutral";
+                      return (
+                        <div key={status} className="space-y-2">
+                          <StatusPill label={title} tone={tone} />
+                          <ul className="space-y-2">
+                            {group.map((flag) => (
+                              <li key={flag.claim_id}>
+                                <Panel>
+                                  <div className="space-y-1 px-4 py-3 text-sm">
+                                    <p className="font-medium text-ivory">{flag.follow_up}</p>
+                                    <p className="text-mist">{flag.statement}</p>
+                                    {flag.cv_quote ? <p className="text-mist">CV: {flag.cv_quote}</p> : null}
+                                    {flag.interview_quote ? <p className="text-mist">Interview: {flag.interview_quote}</p> : null}
+                                  </div>
+                                </Panel>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <p className="text-sm text-mist">No follow-up prompts. The checked CV claims did not leave a contradiction, an unverified claim, or a claim the interview never reached.</p>
+                  )}
+                </div>
+              ) : (
+                <p className="text-sm text-mist">Follow-up prompts appear after the interview ends. Check CV claims once the transcript is ready.</p>
               )}
             </section>
             <section className="space-y-3">

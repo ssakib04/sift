@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import logging
+import re
 import secrets
 import shutil
 import uuid
@@ -28,11 +29,24 @@ from app.models.candidate import (
 )
 from app.models.job import JobChecklistQuery, JobVersion
 from app.schemas.screening import CandidateGroupRead, CandidateRead, InviteRead, QueryEvaluationRead
+from app.services.cv_claims import store_cv_claims
 from app.services.embeddings import Embedder
+from app.services.face_embed import FaceEmbedder, create_face_embedder
+from app.services.identification import store_candidate_face, store_candidate_profile
 from app.services.invites import InviteSender, invitation_body
 from app.services.ranking import RankInput, invite_ids, rank_candidates
 
 logger = logging.getLogger(__name__)
+_EMAIL = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
+
+
+def contact_email(given: str, attributes: dict[str, object], raw_text: str) -> str:
+    """Prefer the sender address, then the address written on the CV."""
+    for candidate in (given, str(attributes.get("email") or ""), raw_text):
+        match = _EMAIL.search(candidate)
+        if match is not None:
+            return match.group(0)[:320]
+    return given.strip()[:320]
 
 
 @dataclass(frozen=True)
@@ -101,6 +115,7 @@ async def accept_cv(
     llm: FallbackLLMManager,
     embedder: Embedder,
     sender: InviteSender,
+    face_embedder: FaceEmbedder | None = None,
     version_id: uuid.UUID,
     message_id: str,
     from_address: str,
@@ -176,10 +191,28 @@ async def accept_cv(
         return "parse_failed"
 
     attributes = result.get("extracted_attributes") or {}
+    if not isinstance(attributes, dict):
+        attributes = {}
     full_name = attributes.get("full_name")
     if isinstance(full_name, str) and full_name.strip():
         candidate.full_name = full_name.strip()[:255]
+    candidate.email = contact_email(candidate.email, attributes, str(result.get("raw_text") or ""))
     _store_cv(settings, digest, filename, data, folder="processed")
+    session.add(store_candidate_profile(candidate.id, attributes))
+    store_cv_claims(session, candidate.id, attributes, str(result.get("raw_text") or ""))
+    face_row, face_warning = store_candidate_face(
+        settings.cv_storage_dir,
+        candidate.id,
+        filename,
+        data,
+        face_embedder or _face_embedder(settings),
+        now=now,
+    )
+    if face_row is not None:
+        session.add(face_row)
+    warnings = list(result.get("warnings") or [])
+    if face_warning:
+        warnings.append(face_warning)
     session.add(
         CandidateParseResult(
             id=uuid.uuid4(),
@@ -187,7 +220,7 @@ async def accept_cv(
             status="parsed",
             parse_method=str(result.get("parse_method") or "native"),
             parse_confidence=float(result.get("parse_confidence") or 0),
-            warnings=list(result.get("warnings") or []),
+            warnings=warnings,
             raw_text=str(result.get("raw_text") or ""),
         )
     )
@@ -387,6 +420,10 @@ async def _dispatch_invites(
             )
         )
         await session.flush()
+
+
+def _face_embedder(settings: Settings) -> FaceEmbedder:
+    return create_face_embedder(settings)
 
 
 def _store_cv(settings: Settings, digest: str, filename: str, data: bytes, *, folder: str) -> str:

@@ -1,11 +1,14 @@
 import uuid
 from datetime import datetime
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
 from app.models.job import JobVersion
+
+FACE_DIMENSIONS = 512
 
 
 class Candidate(Base):
@@ -59,6 +62,20 @@ class Candidate(Base):
         back_populates="candidate",
         cascade="all, delete-orphan",
         uselist=False,
+    )
+    profile: Mapped["CandidateProfile | None"] = relationship(
+        back_populates="candidate",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+    face: Mapped["CandidateFace | None"] = relationship(
+        back_populates="candidate",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+    cv_claims: Mapped[list["CvClaim"]] = relationship(
+        back_populates="candidate",
+        cascade="all, delete-orphan",
     )
 
 
@@ -180,13 +197,24 @@ class InterviewSession(Base):
     copilot_gaps: Mapped[list[str]] = mapped_column(JSON, default=list)
     copilot_question: Mapped[str] = mapped_column(Text, default="", server_default="")
     copilot_turn_count: Mapped[int] = mapped_column(Integer, default=-1, server_default="-1")
+    biometric_consented_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     candidate: Mapped[Candidate] = relationship(back_populates="interview_session")
+    face_check: Mapped["FaceCheck | None"] = relationship(
+        back_populates="session",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
     transcript_segments: Mapped[list["TranscriptSegment"]] = relationship(
         back_populates="session",
         cascade="all, delete-orphan",
     )
     analysis: Mapped["InterviewAnalysis | None"] = relationship(
+        back_populates="session",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+    claim_verification: Mapped["ClaimVerification | None"] = relationship(
         back_populates="session",
         cascade="all, delete-orphan",
         uselist=False,
@@ -402,6 +430,124 @@ class EvidenceLink(Base):
     evidence: Mapped[str] = mapped_column(Text)
 
     assessment: Mapped[ConsolidatedAssessment] = relationship(back_populates="evidence_links")
+
+
+class CandidateProfile(Base):
+    __tablename__ = "candidate_profiles"
+
+    candidate_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("candidates.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    headline: Mapped[str] = mapped_column(Text)
+    skills: Mapped[list[str]] = mapped_column(JSON)
+    experience_years: Mapped[float] = mapped_column(Float)
+
+    candidate: Mapped[Candidate] = relationship(back_populates="profile")
+
+
+class CandidateFace(Base):
+    __tablename__ = "candidate_faces"
+
+    candidate_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("candidates.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    storage_path: Mapped[str] = mapped_column(String(512))
+    embedding: Mapped[list[float]] = mapped_column(Vector(FACE_DIMENSIONS))
+    det_score: Mapped[float] = mapped_column(Float)
+    enrolled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    candidate: Mapped[Candidate] = relationship(back_populates="face")
+
+
+class FaceCheck(Base):
+    __tablename__ = "face_checks"
+
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("interview_sessions.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    status: Mapped[str] = mapped_column(String(32))
+    matched_candidate_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("candidates.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    similarity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    invited_similarity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ambiguous: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    samples: Mapped[list[dict[str, object]]] = mapped_column(JSON, default=list)
+    concluded: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    session: Mapped[InterviewSession] = relationship(back_populates="face_check")
+
+
+class CvClaim(Base):
+    __tablename__ = "cv_claims"
+    __table_args__ = (UniqueConstraint("candidate_id", "claim_id", name="uq_candidate_claim"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    candidate_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("candidates.id", ondelete="CASCADE"),
+        index=True,
+    )
+    claim_id: Mapped[str] = mapped_column(String(8))
+    kind: Mapped[str] = mapped_column(String(32))
+    statement: Mapped[str] = mapped_column(Text)
+    subject: Mapped[str] = mapped_column(Text)
+    cv_quote: Mapped[str] = mapped_column(Text)
+    amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    candidate: Mapped[Candidate] = relationship(back_populates="cv_claims")
+
+
+class ClaimVerification(Base):
+    __tablename__ = "claim_verifications"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("interview_sessions.id", ondelete="CASCADE"),
+        unique=True,
+    )
+    llm_tier: Mapped[str] = mapped_column(String(32))
+    fallback_used: Mapped[bool]
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    session: Mapped[InterviewSession] = relationship(back_populates="claim_verification")
+    flags: Mapped[list["ClaimFlag"]] = relationship(
+        back_populates="verification",
+        cascade="all, delete-orphan",
+    )
+
+
+class ClaimFlag(Base):
+    __tablename__ = "claim_flags"
+    __table_args__ = (UniqueConstraint("verification_id", "claim_id", name="uq_verification_claim"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    verification_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("claim_verifications.id", ondelete="CASCADE"),
+        index=True,
+    )
+    sequence: Mapped[int] = mapped_column(Integer)
+    claim_id: Mapped[str] = mapped_column(String(8))
+    kind: Mapped[str] = mapped_column(String(32))
+    statement: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(32))
+    cv_quote: Mapped[str] = mapped_column(Text)
+    interview_quote: Mapped[str] = mapped_column(Text)
+    follow_up: Mapped[str] = mapped_column(Text)
+
+    verification: Mapped[ClaimVerification] = relationship(back_populates="flags")
 
 
 class IntakeMessage(Base):

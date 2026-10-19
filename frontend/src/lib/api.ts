@@ -75,6 +75,15 @@ export type CandidateRecord = {
   job_title: string;
 };
 
+export type CvUploadResult = {
+  scored: number;
+  duplicate: number;
+  parse_failed: number;
+  invalid: number;
+  failed: number;
+  items: { filename: string; outcome: string }[];
+};
+
 export type CandidateGroup = {
   job_id: string;
   job_title: string;
@@ -96,6 +105,24 @@ export type AssessmentTrace = {
   source_type: string;
   source_reference: string;
   evidence: string;
+};
+
+export type ClaimFlag = {
+  claim_id: string;
+  kind: string;
+  statement: string;
+  status: "contradiction" | "unverified" | "not_discussed";
+  cv_quote: string;
+  interview_quote: string;
+  follow_up: string;
+};
+
+export type ClaimVerification = {
+  candidate_id: string;
+  llm_tier: string;
+  fallback_used: boolean;
+  supported_count: number;
+  flags: ClaimFlag[];
 };
 
 export type MasterAssessment = {
@@ -138,6 +165,48 @@ export type JobComparison = {
   rows: ComparisonRow[];
 };
 
+export type ProgressCard = {
+  candidate_id: string;
+  full_name: string;
+  rank: number | null;
+  detail: string;
+  interview_status: string;
+};
+
+export type ProgressColumn = {
+  stage: "received" | "screened" | "invited" | "interview" | "quiz" | "assessed";
+  label: string;
+  cards: ProgressCard[];
+};
+
+export type ProgressBoard = {
+  job_id: string;
+  job_title: string;
+  applicant_count: number;
+  columns: ProgressColumn[];
+};
+
+export type CopilotChip = {
+  label: string;
+  kind: "navigate" | "prompt" | "report";
+  href: string;
+  prompt: string;
+  candidate_id: string | null;
+};
+
+export type CopilotNavigation = {
+  href: string;
+  label: string;
+};
+
+export type CopilotTurn = {
+  message: string;
+  job: JobRecord | null;
+  navigation: CopilotNavigation | null;
+  chips: CopilotChip[];
+  report_candidate_id: string | null;
+};
+
 export type InviteRecord = {
   job_title: string;
   company_name: string;
@@ -175,6 +244,37 @@ export type InterviewDetail = {
   started_at: string | null;
   ended_at: string | null;
   processing_status: string;
+  biometric_consented_at?: string | null;
+};
+
+export type IdentityProfile = {
+  candidate_id: string;
+  full_name: string;
+  headline: string;
+  skills: string[];
+  pre_interview_score: number | null;
+  probe_areas: string[];
+};
+
+export type IdentificationAck = {
+  status: string;
+  concluded: boolean;
+  sample_count: number;
+  sample_limit: number;
+};
+
+export type Identification = {
+  status: string;
+  message: string;
+  similarity: number | null;
+  invited_similarity: number | null;
+  invited_name: string;
+  matched_name: string | null;
+  hint_name: string | null;
+  profile: IdentityProfile | null;
+  concluded?: boolean;
+  sample_count?: number;
+  sample_limit?: number;
 };
 
 export type TranscriptTurn = {
