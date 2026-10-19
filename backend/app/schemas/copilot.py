@@ -1,11 +1,25 @@
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 
 from app.schemas.job import JobRead
 
 CopilotRole = Literal["user", "assistant"]
-CopilotAction = Literal["reply", "create_job", "list_jobs", "list_policies"]
+CopilotAction = Literal[
+    "reply",
+    "create_job",
+    "list_jobs",
+    "list_policies",
+    "rank_job",
+    "open_candidate",
+    "explain_rank",
+    "pipeline",
+    "open_job",
+    "open_report",
+]
+CopilotChipKind = Literal["navigate", "prompt", "report"]
+CopilotFocus = Literal["stuck", "empty", "summary"]
 
 
 class CopilotMessage(BaseModel):
@@ -27,8 +41,28 @@ class CopilotPlan(BaseModel):
     action: CopilotAction
     message: str = ""
     job: dict[str, object] | None = None
+    job_query: str = ""
+    candidate_name: str = ""
+    other_name: str = ""
+    focus: CopilotFocus = "summary"
+
+
+class CopilotNavigation(BaseModel):
+    href: str
+    label: str = ""
+
+
+class CopilotChip(BaseModel):
+    label: str
+    kind: CopilotChipKind
+    href: str = ""
+    prompt: str = ""
+    candidate_id: UUID | None = None
 
 
 class CopilotTurnResponse(BaseModel):
     message: str
     job: JobRead | None = None
+    navigation: CopilotNavigation | None = None
+    chips: list[CopilotChip] = Field(default_factory=list)
+    report_candidate_id: UUID | None = None

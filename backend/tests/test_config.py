@@ -12,6 +12,8 @@ _SETTING_ENV_VARS = (
     "GEMINI_MODEL",
     "OLLAMA_MODEL",
     "EMBEDDING_BACKEND",
+    "FACE_BACKEND",
+    "FACE_MODEL",
 )
 
 
@@ -40,6 +42,10 @@ def test_settings_default_to_phase1_models(monkeypatch: pytest.MonkeyPatch) -> N
     assert settings.apply_to_address == "fizoadverts@gmail.com"
     assert settings.imap_password == ""
     assert settings.embedding_backend == "minilm"
+    assert settings.face_backend == "insightface"
+    assert settings.face_model == "buffalo_l"
+    assert settings.face_confirm_threshold == 0.42
+    assert settings.face_possible_threshold == 0.32
 
 
 def test_settings_read_environment(monkeypatch: pytest.MonkeyPatch) -> None:

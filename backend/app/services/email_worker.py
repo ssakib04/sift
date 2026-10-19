@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings
 from app.core.llm_fallback import FallbackLLMManager
 from app.services.embeddings import Embedder
+from app.services.face_embed import FaceEmbedder, create_face_embedder
 from app.services.invites import InviteSender
 from app.services.mailpit import Mailbox, MailAttachment
 from app.services.ocr_service import InvalidCvError, validate_cv
@@ -44,6 +45,7 @@ async def ingest_inbox(
 ) -> int:
     """Poll the inbox once. Matching CV mail is scored; everything else waits for a later poll."""
     keys = await load_mail_keys(session)
+    face_embedder = create_face_embedder(settings)
     summaries = await mailbox.list_summaries()
     processed = 0
     for summary in reversed(summaries):
@@ -56,6 +58,7 @@ async def ingest_inbox(
                 mailbox=mailbox,
                 sender=sender,
                 keys=keys,
+                face_embedder=face_embedder,
                 message_id=summary.message_id,
                 subject=summary.subject,
                 from_address=summary.from_address,
@@ -79,6 +82,7 @@ async def _handle_summary(
     mailbox: Mailbox,
     sender: InviteSender,
     keys: Sequence[JobMailKey],
+    face_embedder: FaceEmbedder,
     message_id: str,
     subject: str,
     from_address: str,
@@ -114,6 +118,7 @@ async def _handle_summary(
         filename=attachment.filename,
         data=data,
         media_type=media_type,
+        face_embedder=face_embedder,
     )
     await record_intake(session, message_id, outcome, matched.version_id)
     return outcome

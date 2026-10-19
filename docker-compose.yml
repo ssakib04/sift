@@ -67,6 +67,8 @@ services:
       COMPANY_COUNTRY: ${COMPANY_COUNTRY:-Bangladesh}
       EMBEDDING_BACKEND: ${EMBEDDING_BACKEND:-minilm}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+      FACE_BACKEND: ${FACE_BACKEND:-insightface}
+      FACE_MODEL: ${FACE_MODEL:-buffalo_l}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
       MAILPIT_BASE_URL: http://mailpit:8025
       CV_STORAGE_DIR: /data/cvs
@@ -121,6 +123,8 @@ services:
       OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2}
       EMBEDDING_BACKEND: ${EMBEDDING_BACKEND:-minilm}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+      FACE_BACKEND: ${FACE_BACKEND:-insightface}
+      FACE_MODEL: ${FACE_MODEL:-buffalo_l}
       MAILPIT_BASE_URL: http://mailpit:8025
       CV_STORAGE_DIR: /data/cvs
       PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://localhost:3000}

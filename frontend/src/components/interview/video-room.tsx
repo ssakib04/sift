@@ -1,6 +1,7 @@
 "use client";
 
 import { ConnectionState, Room, RoomEvent, Track } from "livekit-client";
+import type { TranscriptTurn } from "@/lib/api";
 import { PointerEvent as ReactPointerEvent, ReactNode, useEffect, useRef, useState } from "react";
 
 type VideoRoomProps = {
@@ -10,9 +11,12 @@ type VideoRoomProps = {
   livekitUrl: string;
   livekitToken: string;
   record: boolean;
+  captureFrames?: boolean;
+  onFrame?: (imageBase64: string) => void;
   onConnection: (state: string) => void;
   onHangup: () => void;
   onQuiz?: () => void;
+  onTranscript?: (turn: Pick<TranscriptTurn, "speaker" | "text" | "is_final">) => void;
 };
 
 function isPerson(identity: string): boolean {
@@ -55,14 +59,19 @@ export function VideoRoom({
   livekitUrl,
   livekitToken,
   record,
+  captureFrames = false,
+  onFrame,
   onConnection,
   onHangup,
   onQuiz,
+  onTranscript,
 }: VideoRoomProps) {
   const localRef = useRef<HTMLVideoElement>(null);
   const remoteRef = useRef<HTMLVideoElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const roomRef = useRef<Room | null>(null);
+  const onTranscriptRef = useRef(onTranscript);
+  onTranscriptRef.current = onTranscript;
   const streamRef = useRef<MediaStream | null>(null);
   const dragRef = useRef<{ x: number; y: number; right: number; bottom: number } | null>(null);
   const [muted, setMuted] = useState(false);
@@ -153,6 +162,28 @@ export function VideoRoom({
         connection.on(RoomEvent.TrackUnsubscribed, () => paintRemote(connection));
         connection.on(RoomEvent.TrackMuted, () => paintRemote(connection));
         connection.on(RoomEvent.TrackUnmuted, () => paintRemote(connection));
+        connection.on(RoomEvent.DataReceived, (payload, _participant, _kind, topic) => {
+          if (topic !== "transcript") {
+            return;
+          }
+          const hear = onTranscriptRef.current;
+          if (!hear) {
+            return;
+          }
+          try {
+            const notice = JSON.parse(new TextDecoder().decode(payload)) as {
+              speaker?: string;
+              text?: string;
+              final?: boolean;
+            };
+            if (!notice.speaker || !notice.text) {
+              return;
+            }
+            hear({ speaker: notice.speaker, text: notice.text, is_final: Boolean(notice.final) });
+          } catch {
+            return;
+          }
+        });
         try {
           await connection.connect(livekitUrl, livekitToken);
         } catch {
@@ -181,6 +212,42 @@ export function VideoRoom({
       streamRef.current = null;
     };
   }, [attempt, livekitToken, livekitUrl, onConnection]);
+
+  useEffect(() => {
+    if (!captureFrames || !onFrame) {
+      return;
+    }
+    const send = onFrame;
+    let stop = false;
+
+    function grab() {
+      const video = localRef.current;
+      if (stop || !video || cameraOff || video.videoWidth === 0) {
+        return;
+      }
+      const scale = Math.min(1, 480 / video.videoWidth);
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+      canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+      const context = canvas.getContext("2d");
+      if (!context) {
+        return;
+      }
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const payload = canvas.toDataURL("image/jpeg", 0.8).split(",")[1];
+      if (payload) {
+        send(payload);
+      }
+    }
+
+    const first = window.setTimeout(grab, 1000);
+    const timer = window.setInterval(grab, 1000);
+    return () => {
+      stop = true;
+      window.clearTimeout(first);
+      window.clearInterval(timer);
+    };
+  }, [cameraOff, captureFrames, onFrame]);
 
   useEffect(() => {
     if (localRef.current && streamRef.current) {
@@ -262,7 +329,7 @@ export function VideoRoom({
   const remoteLabel = role === "recruiter" ? "Candidate" : "Recruiter";
 
   return (
-    <div ref={stageRef} className="relative h-full min-h-0 w-full overflow-hidden bg-night">
+    <div ref={stageRef} className="relative h-full min-h-0 w-full overflow-hidden">
       <video
         ref={remoteRef}
         autoPlay

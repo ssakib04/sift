@@ -7,7 +7,7 @@ import { AppShell } from "@/components/ui/app-shell";
 import { buttonClass } from "@/components/ui/button";
 import { fieldClass } from "@/components/ui/field";
 import { PageHeader } from "@/components/ui/page-header";
-import { ApiError, CandidateRecord, ChecklistQuery, JobRecord, apiRequest } from "@/lib/api";
+import { ApiError, CandidateRecord, ChecklistQuery, CvUploadResult, JobRecord, apiRequest } from "@/lib/api";
 
 const CATEGORIES = [
   "Information Technology",
@@ -176,6 +176,34 @@ function JobsPageContent() {
   async function loadCandidates(jobId: string) {
     const rows = await apiRequest<CandidateRecord[]>(`/api/v1/jobs/${jobId}/candidates`);
     setCandidates(rows);
+  }
+
+  async function uploadCvs(files: File[]) {
+    if (!job || files.length === 0) return;
+    if (files.length > 20) {
+      setMessage("Upload at most 20 CVs at a time.");
+      return;
+    }
+    const body = new FormData();
+    for (const file of files) {
+      body.append("files", file);
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      const result = await apiRequest<CvUploadResult>(`/api/v1/jobs/${job.id}/cvs`, { method: "POST", body });
+      await loadCandidates(job.id);
+      const parts = [`${result.scored} scored`];
+      if (result.duplicate > 0) parts.push(`${result.duplicate} already stored`);
+      if (result.parse_failed > 0) parts.push(`${result.parse_failed} could not be read`);
+      if (result.invalid > 0) parts.push(`${result.invalid} were not PDF or DOCX`);
+      if (result.failed > 0) parts.push(`${result.failed} failed`);
+      setMessage(`Upload finished. ${parts.join(", ")}. Invites go to anyone who newly enters the top 3.`);
+    } catch (error) {
+      setMessage(error instanceof ApiError ? error.message : "Could not upload those CVs.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function checkInbox() {
@@ -393,10 +421,28 @@ function JobsPageContent() {
                 <h3 className="font-display text-2xl font-medium text-ivory">Applicants</h3>
                 <p className="text-sm text-mist">
                   Email a PDF or DOCX CV to {job.apply_email}. Subject: {job.mail_subject}. The job id {job.id} also matches.
+                  Or upload up to 20 CVs for this job. Each file is scored the same way, and invites still go to the top 3.
                 </p>
-                <button type="button" onClick={checkInbox} disabled={busy} className={buttonClass("secondary")}>
-                  Check inbox
-                </button>
+                <div className="flex flex-wrap gap-3">
+                  <label className={`${buttonClass("secondary")} cursor-pointer`}>
+                    {busy ? "Working..." : "Upload CVs"}
+                    <input
+                      type="file"
+                      accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                      multiple
+                      disabled={busy}
+                      className="sr-only"
+                      onChange={(event) => {
+                        const chosen = event.target.files ? Array.from(event.target.files) : [];
+                        event.target.value = "";
+                        void uploadCvs(chosen);
+                      }}
+                    />
+                  </label>
+                  <button type="button" onClick={checkInbox} disabled={busy} className={buttonClass("secondary")}>
+                    Check inbox
+                  </button>
+                </div>
                 <ul className="space-y-2">
                   {candidates.map((candidate) => (
                     <li key={candidate.id} className="rounded-control border border-ivory/10 p-3 text-sm">

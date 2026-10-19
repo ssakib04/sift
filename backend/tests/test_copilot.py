@@ -9,9 +9,23 @@ from app.core.config import Settings
 from app.core.database import SessionFactory
 from app.core.llm_fallback import FallbackLLMManager
 from app.models.job import Job
-from app.schemas.copilot import CopilotMessage
+from app.schemas.copilot import CopilotMessage, CopilotPlan
 from app.schemas.job import JobRead, JobVersionRead
-from app.services.copilot import PLANNER_SYSTEM, job_request_from_plan, plan_from_model_text, run_copilot_turn, summarize_jobs
+from app.schemas.progress import ProgressBoardRead, ProgressCardRead, ProgressColumnRead
+from app.services.copilot import (
+    PLANNER_SYSTEM,
+    NamedJob,
+    NamedPerson,
+    explain_from_records,
+    explain_pair,
+    job_request_from_plan,
+    pipeline_from_boards,
+    plan_from_model_text,
+    rank_from_records,
+    run_copilot_turn,
+    select_jobs,
+    summarize_jobs,
+)
 from tests.checklist_factory import sample_queries
 
 
@@ -171,3 +185,140 @@ async def test_copilot_creates_a_draft_through_workflow_one() -> None:
             async with SessionFactory() as session:
                 await session.execute(delete(Job).where(Job.id == job_id))
                 await session.commit()
+
+
+def _job(title: str, status: str = "locked") -> NamedJob:
+    return NamedJob(id=uuid4(), title=title, status=status)
+
+
+def _person(
+    name: str,
+    job: NamedJob,
+    *,
+    rank: int | None = None,
+    aggregate: float | None = None,
+    overall: float | None = None,
+    label: str = "",
+    gap: str = "",
+    technical: float | None = None,
+    assessed: bool = False,
+) -> NamedPerson:
+    return NamedPerson(
+        id=uuid4(),
+        full_name=name,
+        job_id=job.id,
+        job_title=job.title,
+        rank=rank,
+        aggregate_score=aggregate,
+        overall_score=overall,
+        suitability_label=label,
+        key_gap=gap,
+        technical_dimension=technical,
+        experience_dimension=None,
+        qualification_dimension=None,
+        mcq_score=None,
+        interview_qa=None,
+        assessed=assessed,
+    )
+
+
+def test_unknown_role_does_not_invent_a_ranking() -> None:
+    result = rank_from_records([_job("Data Analyst")], [], "Ghost Role")
+    assert result.navigation is None
+    assert result.job is None
+    assert "Ghost Role" in result.message
+    assert "No stored job" in result.message
+
+
+def test_two_matching_titles_ask_which_role() -> None:
+    engineer = _job("Senior Python Engineer")
+    analyst = _job("Senior Python Analyst")
+    result = rank_from_records([engineer, analyst], [], "Senior Python")
+    assert result.navigation is None
+    assert "Senior Python Engineer" in result.message
+    assert "Senior Python Analyst" in result.message
+    assert {chip.prompt for chip in result.chips} == {
+        "Rank candidates for Senior Python Engineer",
+        "Rank candidates for Senior Python Analyst",
+    }
+
+
+def test_unique_title_ranks_and_opens_the_role() -> None:
+    role = _job("Senior Python Engineer")
+    priya = _person("Priya Shah", role, rank=2, aggregate=0.4, overall=82.0, label="Strong fit", gap="systems", assessed=True)
+    omar = _person("Omar Ali", role, rank=1, aggregate=0.9, overall=71.0, label="Moderate fit", gap="testing", assessed=True)
+    result = rank_from_records([role], [omar, priya], "python")
+    assert result.navigation is not None
+    assert result.navigation.href == f"/candidates?job={role.id}"
+    assert result.message.index("Priya Shah") < result.message.index("Omar Ali")
+    assert "82.0" in result.message
+    assert result.chips[0].kind == "navigate"
+
+
+def test_explain_cites_stored_scores_for_one_role() -> None:
+    role = _job("Senior Python Engineer")
+    priya = _person("Priya Shah", role, overall=82.0, label="Strong fit", gap="systems", technical=80.0, assessed=True)
+    omar = _person("Omar Ali", role, overall=71.0, label="Moderate fit", gap="testing", technical=60.0, assessed=True)
+    text = explain_pair(omar, priya)
+    assert "Priya Shah is ahead of Omar Ali" in text
+    assert "82.0" in text
+    assert "71.0" in text
+    assert "systems" in text
+    assert "testing" in text
+    other = _job("Data Analyst")
+    lina = _person("Lina Roy", other, overall=90.0, assessed=True)
+    assert "within one role" in explain_pair(priya, lina)
+
+
+def test_explain_route_opens_the_shared_role() -> None:
+    role = _job("Senior Python Engineer")
+    priya = _person("Priya Shah", role, overall=82.0, label="Strong fit", gap="systems", assessed=True)
+    omar = _person("Omar Ali", role, overall=71.0, label="Moderate fit", gap="testing", assessed=True)
+    result = explain_from_records([role], [priya, omar], left_name="Priya", right_name="Omar", job_query=role.title)
+    assert result.navigation is not None
+    assert result.navigation.href == f"/candidates?job={role.id}"
+
+
+def test_pipeline_lists_empty_roles_and_stuck_people() -> None:
+    empty = ProgressBoardRead(
+        job_id=uuid4(),
+        job_title="Support Engineer",
+        applicant_count=0,
+        columns=[ProgressColumnRead(stage=stage, label=stage, cards=[]) for stage in (
+            "received",
+            "screened",
+            "invited",
+            "interview",
+            "quiz",
+            "assessed",
+        )],
+    )
+    invited = ProgressCardRead(candidate_id=uuid4(), full_name="Priya Shah", interview_status="")
+    filled_columns = []
+    for stage in ("received", "screened", "invited", "interview", "quiz", "assessed"):
+        cards = [invited] if stage == "invited" else []
+        filled_columns.append(ProgressColumnRead(stage=stage, label=stage, cards=cards))
+    active = ProgressBoardRead(
+        job_id=uuid4(),
+        job_title="Senior Python Engineer",
+        applicant_count=1,
+        columns=filled_columns,
+    )
+    result = pipeline_from_boards([active, empty], "summary")
+    assert result.navigation is not None
+    assert result.navigation.href == "/progress"
+    assert "Priya Shah on Senior Python Engineer" in result.message
+    assert "Support Engineer" in result.message
+    empty_only = pipeline_from_boards([active, empty], "empty")
+    assert "Priya Shah" not in empty_only.message
+    assert "Support Engineer" in empty_only.message
+
+
+def test_rank_plan_reads_the_job_query() -> None:
+    plan = plan_from_model_text(
+        '{"action":"rank_job","message":"","job_query":"Senior Python","candidate_name":"","other_name":"","focus":"stuck"}'
+    )
+    assert isinstance(plan, CopilotPlan)
+    assert plan.action == "rank_job"
+    assert plan.job_query == "Senior Python"
+    assert plan.focus == "stuck"

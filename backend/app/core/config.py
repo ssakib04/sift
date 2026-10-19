@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     company_country: str = "Bangladesh"
     embedding_backend: str = "minilm"
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    face_backend: str = "insightface"
+    face_model: str = "buffalo_l"
+    face_model_dir: str = ""
+    face_confirm_threshold: float = 0.42
+    face_possible_threshold: float = 0.32
     cors_origins: str = "http://localhost:3000"
     mailpit_base_url: str = "http://localhost:8025"
     smtp_host: str = "localhost"

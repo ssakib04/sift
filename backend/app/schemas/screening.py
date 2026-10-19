@@ -42,6 +42,20 @@ class InboxPollRead(BaseModel):
     processed: int = Field(ge=0)
 
 
+class CvUploadItemRead(BaseModel):
+    filename: str
+    outcome: str
+
+
+class CvUploadRead(BaseModel):
+    scored: int = Field(ge=0)
+    duplicate: int = Field(ge=0)
+    parse_failed: int = Field(ge=0)
+    invalid: int = Field(ge=0)
+    failed: int = Field(ge=0)
+    items: list[CvUploadItemRead]
+
+
 class InviteRead(BaseModel):
     job_title: str
     company_name: str

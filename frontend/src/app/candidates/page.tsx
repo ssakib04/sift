@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 
 import { AppShell } from "@/components/ui/app-shell";
 import { PageHeader } from "@/components/ui/page-header";
@@ -12,7 +13,8 @@ function points(value: number | null): string {
   return value === null ? "—" : value.toFixed(1);
 }
 
-export default function CandidatesPage() {
+function CandidatesPageContent() {
+  const requestedJobId = useSearchParams().get("job");
   const [groups, setGroups] = useState<CandidateGroup[]>([]);
   const [comparisons, setComparisons] = useState<JobComparison[]>([]);
   const [message, setMessage] = useState("");
@@ -30,6 +32,17 @@ export default function CandidatesPage() {
       });
   }, []);
 
+  useEffect(() => {
+    if (!requestedJobId || groups.length === 0) {
+      return;
+    }
+    if (!groups.some((group) => group.job_id === requestedJobId)) {
+      setMessage("That role has no applicants to rank yet.");
+      return;
+    }
+    document.getElementById(`role-${requestedJobId}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [requestedJobId, groups]);
+
   return (
     <AppShell>
       <div className="mx-auto max-w-6xl space-y-8">
@@ -39,7 +52,11 @@ export default function CandidatesPage() {
         {groups.map((group) => {
           const comparison = comparisons.find((item) => item.job_id === group.job_id);
           return (
-          <section key={group.job_id} className="space-y-3">
+          <section
+            key={group.job_id}
+            id={`role-${group.job_id}`}
+            className={`scroll-mt-8 space-y-3 ${requestedJobId === group.job_id ? "rounded-card ring-1 ring-amber/60" : ""}`}
+          >
             <h2 className="font-display text-2xl font-medium text-ivory">{group.job_title}</h2>
             {comparison ? (
               <Panel>
@@ -111,5 +128,13 @@ export default function CandidatesPage() {
         })}
       </div>
     </AppShell>
+  );
+}
+
+export default function CandidatesPage() {
+  return (
+    <Suspense fallback={<AppShell><p className="text-sm text-mist">Opening candidates…</p></AppShell>}>
+      <CandidatesPageContent />
+    </Suspense>
   );
 }

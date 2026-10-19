@@ -8,6 +8,11 @@ class TranscriptWrite(Enum):
     INSERT = "insert"
 
 
+def transcript_notice(speaker: str, text: str, *, final: bool) -> dict[str, object]:
+    """The live line pushed to the recruiter while speech is still arriving."""
+    return {"speaker": speaker, "text": " ".join(text.split()), "final": final}
+
+
 def accepted_speaker(identity: str) -> str | None:
     """The transcriber only records the two people in the interview."""
     if identity in {"recruiter", "candidate"}:

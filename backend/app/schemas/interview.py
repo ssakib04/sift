@@ -20,6 +20,7 @@ class RecruiterOpenRequest(BaseModel):
 
 class StartInterviewRequest(BaseModel):
     consent: bool
+    biometric_consent: bool = False
 
 
 class OpenedSessionRead(BaseModel):
@@ -47,6 +48,41 @@ class SessionDetailRead(BaseModel):
     started_at: datetime | None
     ended_at: datetime | None
     processing_status: str = ""
+    biometric_consented_at: datetime | None = None
+
+
+class ProfileOverviewRead(BaseModel):
+    candidate_id: UUID
+    full_name: str
+    headline: str
+    skills: list[str]
+    pre_interview_score: float | None
+    probe_areas: list[str]
+
+
+class IdentificationFrameRequest(BaseModel):
+    image_base64: str = Field(min_length=32, max_length=2_000_000)
+
+
+class IdentificationAck(BaseModel):
+    status: str
+    concluded: bool = False
+    sample_count: int = 0
+    sample_limit: int = 8
+
+
+class IdentificationRead(BaseModel):
+    status: str
+    message: str
+    similarity: float | None = None
+    invited_similarity: float | None = None
+    invited_name: str
+    matched_name: str | None = None
+    hint_name: str | None = None
+    profile: ProfileOverviewRead | None = None
+    concluded: bool = False
+    sample_count: int = 0
+    sample_limit: int = 8
 
 
 class SessionStatusRead(BaseModel):

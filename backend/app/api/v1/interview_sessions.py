@@ -19,6 +19,10 @@ from app.schemas.interview import (
     CopilotAskRead,
     CopilotAskRequest,
     CopilotRead,
+    IdentificationAck,
+    IdentificationFrameRequest,
+    IdentificationRead,
+    ProfileOverviewRead,
     IceServerRead,
     OpenedSessionRead,
     PracticeSessionRead,
@@ -28,6 +32,7 @@ from app.schemas.interview import (
     StartInterviewRequest,
     TranscriptTurnRead,
 )
+from app.services.identification import IdentificationView, identify_frame, read_identification
 from app.services.interview_practice import open_practice_session
 from app.services.interview_rooms import signal_hub
 from app.services.interview_rules import InterviewError
@@ -181,6 +186,7 @@ async def read_session(
         started_at=detail.started_at,
         ended_at=detail.ended_at,
         processing_status=detail.processing_status,
+        biometric_consented_at=detail.biometric_consented_at,
     )
 
 
@@ -215,7 +221,7 @@ async def start_session(
 ) -> SessionStatusRead:
     try:
         _match(claims, session_id)
-        await start_interview(db, claims, consent=body.consent)
+        await start_interview(db, claims, consent=body.consent, biometric_consent=body.biometric_consent)
         detail = await session_detail(db, get_app_settings(), claims, "")
     except InterviewError as exc:
         raise _http(exc) from exc
@@ -225,6 +231,67 @@ async def start_session(
         consented_at=detail.consented_at,
         started_at=detail.started_at,
         ended_at=detail.ended_at,
+    )
+
+
+@router.post("/{session_id}/identification", response_model=IdentificationAck)
+async def check_identity(
+    session_id: UUID,
+    body: IdentificationFrameRequest,
+    claims: SessionClaims = Depends(_current_claims),
+    db: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_app_settings),
+) -> IdentificationAck:
+    try:
+        _match(claims, session_id)
+        view = await identify_frame(db, settings, claims, body.image_base64)
+    except InterviewError as exc:
+        raise _http(exc) from exc
+    return IdentificationAck(
+        status=view.status,
+        concluded=view.concluded,
+        sample_count=view.sample_count,
+        sample_limit=view.sample_limit,
+    )
+
+
+@router.get("/{session_id}/identification", response_model=IdentificationRead)
+async def read_identity(
+    session_id: UUID,
+    claims: SessionClaims = Depends(_current_claims),
+    db: AsyncSession = Depends(get_session),
+) -> IdentificationRead:
+    try:
+        _match(claims, session_id)
+        view = await read_identification(db, claims)
+    except InterviewError as exc:
+        raise _http(exc) from exc
+    return _identification_read(view)
+
+
+def _identification_read(view: IdentificationView) -> IdentificationRead:
+    profile = None
+    if view.profile is not None:
+        profile = ProfileOverviewRead(
+            candidate_id=view.profile.candidate_id,
+            full_name=view.profile.full_name,
+            headline=view.profile.headline,
+            skills=view.profile.skills,
+            pre_interview_score=view.profile.pre_interview_score,
+            probe_areas=view.profile.probe_areas,
+        )
+    return IdentificationRead(
+        status=view.status,
+        message=view.message,
+        similarity=view.similarity,
+        invited_similarity=view.invited_similarity,
+        invited_name=view.invited_name,
+        matched_name=view.matched_name,
+        hint_name=view.hint_name,
+        profile=profile,
+        concluded=view.concluded,
+        sample_count=view.sample_count,
+        sample_limit=view.sample_limit,
     )
 
 

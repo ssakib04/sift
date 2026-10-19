@@ -25,3 +25,6 @@ mcp>=2.3,<3
 PyJWT>=2.9.0
 livekit-api>=1.0.2
 livekit-agents>=1.2.0
+insightface>=0.7.3,<0.8
+onnxruntime>=1.17.0
+opencv-python-headless>=4.10.0

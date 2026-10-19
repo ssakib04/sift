@@ -4,7 +4,18 @@ from livekit.api import CreateAgentDispatchRequest
 
 from app.services.interview_livekit import TRANSCRIBER_AGENT_NAME, transcriber_dispatch
 from app.services.interview_practice import is_practice_job, practice_guest_url
-from app.services.interview_transcript import TranscriptWrite, accepted_speaker, spoken_window, transcript_write
+from app.services.interview_transcript import (
+    TranscriptWrite,
+    accepted_speaker,
+    spoken_window,
+    transcript_notice,
+    transcript_write,
+)
+
+
+def test_a_live_notice_keeps_the_words_that_have_arrived() -> None:
+    notice = transcript_notice("candidate", "  I   built  ", final=False)
+    assert notice == {"speaker": "candidate", "text": "I built", "final": False}
 
 
 def test_only_the_two_interview_participants_are_transcribed() -> None:

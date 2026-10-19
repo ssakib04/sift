@@ -67,6 +67,11 @@ def assert_recruiter(role: str) -> None:
         raise InterviewError("INTERVIEW_FORBIDDEN", "This view is only available to the recruiter.", 403)
 
 
+def assert_candidate(role: str) -> None:
+    if role != "candidate":
+        raise InterviewError("INTERVIEW_FORBIDDEN", "Only the candidate camera can be checked.", 403)
+
+
 def assert_own_voice(role: str, speaker: str) -> str:
     expected = {"candidate": "candidate", "recruiter": "recruiter"}.get(role)
     if expected is None or speaker != expected:

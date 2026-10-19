@@ -1,17 +1,21 @@
 ﻿"use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 
+import { IdentityPanel } from "@/components/interview/identity-panel";
 import { InCallCopilot } from "@/components/interview/in-call-copilot";
 import { LiveTranscript } from "@/components/interview/live-transcript";
 import { McqQuizModal } from "@/components/interview/mcq-quiz-modal";
 import { VideoRoom } from "@/components/interview/video-room";
+import { Atmosphere } from "@/components/ui/atmosphere";
 import { Panel } from "@/components/ui/panel";
 import {
   CopilotAnswer,
+  IdentificationAck,
   InterviewAnalysis,
+  Identification,
   InterviewCopilot,
   InterviewDetail,
   TranscriptTurn,
@@ -41,8 +45,14 @@ export default function InterviewPage() {
   const [left, setLeft] = useState(false);
   const [closed, setClosed] = useState(false);
   const [endError, setEndError] = useState("");
-  const [rail, setRail] = useState<"transcript" | "questions">("transcript");
+  const [rail, setRail] = useState<"transcript" | "questions" | "identity">("transcript");
   const [quizOpen, setQuizOpen] = useState(false);
+  const [identification, setIdentification] = useState<Identification | null>(null);
+  const [faceConsent, setFaceConsent] = useState(false);
+  const [allowingFace, setAllowingFace] = useState(false);
+  const [faceDone, setFaceDone] = useState(false);
+  const sendingFrame = useRef(false);
+  const faceDoneRef = useRef(false);
 
   const onConnection = useCallback((state: string) => {
     setConnection(state);
@@ -109,7 +119,7 @@ export default function InterviewPage() {
     void loadTranscript();
     const timer = window.setInterval(() => {
       void loadTranscript();
-    }, 1000);
+    }, 3000);
     return () => {
       stop = true;
       window.clearInterval(timer);
@@ -170,6 +180,75 @@ export default function InterviewPage() {
     };
   }, [analysis, closed, detail?.status, endError, role, roomId, token]);
 
+  const sendFrame = useCallback(
+    async (imageBase64: string) => {
+      if (sendingFrame.current || faceDoneRef.current) {
+        return;
+      }
+      sendingFrame.current = true;
+      try {
+        const ack = await apiRequest<IdentificationAck>(`/api/v1/interview-sessions/${roomId}/identification`, {
+          method: "POST",
+          headers: { ...bearer(token), "Content-Type": "application/json" },
+          body: JSON.stringify({ image_base64: imageBase64 }),
+        });
+        if (ack.concluded) {
+          faceDoneRef.current = true;
+          setFaceDone(true);
+        }
+      } catch {
+        return;
+      } finally {
+        sendingFrame.current = false;
+      }
+    },
+    [roomId, token],
+  );
+
+  useEffect(() => {
+    if (role !== "recruiter" || !token || closed || detail?.status === "ended" || identification?.concluded) {
+      return;
+    }
+    let stop = false;
+    async function loadIdentity() {
+      try {
+        const next = await apiRequest<Identification>(`/api/v1/interview-sessions/${roomId}/identification`, {
+          headers: bearer(token),
+        });
+        if (!stop) {
+          setIdentification(next);
+        }
+      } catch {
+        return;
+      }
+    }
+    void loadIdentity();
+    const timer = window.setInterval(() => {
+      void loadIdentity();
+    }, 3000);
+    return () => {
+      stop = true;
+      window.clearInterval(timer);
+    };
+  }, [closed, detail?.status, identification?.concluded, role, roomId, token]);
+
+  async function allowFaceCheck() {
+    setAllowingFace(true);
+    try {
+      await apiRequest(`/api/v1/interview-sessions/${roomId}/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...bearer(token) },
+        body: JSON.stringify({ consent: true, biometric_consent: true }),
+      });
+      setDetail((current) => (current ? { ...current, biometric_consented_at: new Date().toISOString() } : current));
+      setMessage("");
+    } catch (error: unknown) {
+      setMessage(error instanceof Error ? error.message : "Face identification could not be enabled.");
+    } finally {
+      setAllowingFace(false);
+    }
+  }
+
   async function askCopilot(question: string) {
     setAsking(true);
     try {
@@ -214,6 +293,46 @@ export default function InterviewPage() {
   const ended = role === "recruiter" ? closed || detail?.status === "ended" : detail?.status === "ended";
   const inCall = Boolean(detail && livekit && token && role && !ended && !left);
 
+  function hearTranscript(notice: { speaker: string; text: string; is_final?: boolean }) {
+    setTurns((current) => {
+      if (notice.is_final === false) {
+        const live = {
+          id: `live-${notice.speaker}`,
+          speaker: notice.speaker,
+          start_time: 0,
+          end_time: 0,
+          text: notice.text,
+          confidence: 1,
+          is_final: false,
+        };
+        const index = current.findIndex((item) => item.speaker === notice.speaker && item.is_final === false);
+        if (index === -1) {
+          return [...current, live];
+        }
+        const next = [...current];
+        next[index] = { ...next[index], text: notice.text };
+        return next;
+      }
+      const settled = current.filter((item) => !(item.speaker === notice.speaker && item.is_final === false));
+      const previous = [...settled].reverse().find((item) => item.speaker === notice.speaker);
+      if (previous?.text === notice.text) {
+        return settled;
+      }
+      return [
+        ...settled,
+        {
+          id: `said-${notice.speaker}-${settled.length}`,
+          speaker: notice.speaker,
+          start_time: 0,
+          end_time: 0,
+          text: notice.text,
+          confidence: 1,
+          is_final: true,
+        },
+      ];
+    });
+  }
+
   function hangUp() {
     if (role === "recruiter") {
       void endCall();
@@ -223,8 +342,9 @@ export default function InterviewPage() {
   }
 
   return (
-    <div className="fixed inset-0 flex flex-col overflow-hidden bg-night text-ivory">
-      <header className="flex h-12 shrink-0 items-center gap-4 border-b border-ivory/10 px-4">
+    <div className="fixed inset-0 flex flex-col overflow-hidden text-ivory">
+      <Atmosphere />
+      <header className="relative flex h-12 shrink-0 items-center gap-4 border-b border-ivory/10 bg-night/35 px-4 backdrop-blur-md">
         {role === "recruiter" ? (
           <Link href="/candidates" className="text-sm text-mist hover:text-ivory">
             Candidates
@@ -249,8 +369,30 @@ export default function InterviewPage() {
         ) : null}
         <p className="text-sm text-mist">{ended ? "Ended" : connection || "Opening"}</p>
       </header>
-      {message ? <p className="shrink-0 px-4 py-2 text-sm text-mist">{message}</p> : null}
-      <div className="flex min-h-0 flex-1">
+      {message ? <p className="relative shrink-0 px-4 py-2 text-sm text-mist">{message}</p> : null}
+      {role === "candidate" && detail && !ended && !detail.biometric_consented_at ? (
+        <div className="shrink-0 space-y-2 border-b border-ivory/10 px-4 py-3">
+          <label className="flex items-start gap-3 text-sm text-mist">
+            <input
+              type="checkbox"
+              checked={faceConsent}
+              onChange={(event) => setFaceConsent(event.target.checked)}
+              className="mt-1"
+            />
+            I agree to a face check. A frame from my camera is compared with the photo on my CV and with other stored
+            candidate photos. The interviewer sees whether I match. If I do not agree, no identity is assumed.
+          </label>
+          <button
+            type="button"
+            disabled={!faceConsent || allowingFace}
+            onClick={() => void allowFaceCheck()}
+            className="text-sm text-ivory underline disabled:text-mist"
+          >
+            Allow face check
+          </button>
+        </div>
+      ) : null}
+      <div className="relative flex min-h-0 flex-1">
         <section className="relative min-w-0 flex-1">
           {inCall && livekit && role ? (
             <VideoRoom
@@ -260,7 +402,10 @@ export default function InterviewPage() {
               livekitUrl={livekit.url}
               livekitToken={livekit.token}
               record={detail?.status === "started"}
+              captureFrames={role === "candidate" && Boolean(detail?.biometric_consented_at) && !faceDone}
+              onFrame={sendFrame}
               onConnection={onConnection}
+              onTranscript={role === "recruiter" ? hearTranscript : undefined}
               onHangup={hangUp}
               onQuiz={role === "candidate" ? () => setQuizOpen(true) : undefined}
             />
@@ -287,7 +432,7 @@ export default function InterviewPage() {
           ) : null}
         </section>
         {role === "recruiter" && !ended ? (
-          <aside className="hidden w-[22rem] shrink-0 flex-col border-l border-ivory/10 md:flex xl:w-[26rem]">
+          <aside className="hidden w-[22rem] shrink-0 flex-col border-l border-ivory/10 bg-night/40 backdrop-blur-xl md:flex xl:w-[26rem]">
             <div className="flex shrink-0 border-b border-ivory/10">
               <button
                 type="button"
@@ -303,9 +448,19 @@ export default function InterviewPage() {
               >
                 Questions
               </button>
+              <button
+                type="button"
+                className={`flex-1 px-3 py-3 text-sm ${rail === "identity" ? "text-ivory" : "text-mist"}`}
+                onClick={() => setRail("identity")}
+              >
+                Identity
+              </button>
             </div>
-            <div className="min-h-0 flex-1 p-4">
-              {rail === "transcript" ? <LiveTranscript turns={turns} /> : null}
+            <div className="min-h-0 flex-1 overflow-y-auto p-4">
+              {rail === "transcript" ? (
+                <LiveTranscript turns={turns} candidateName={identification?.invited_name || ""} />
+              ) : null}
+              {rail === "identity" ? <IdentityPanel identification={identification} /> : null}
               {rail === "questions" ? (
                 <InCallCopilot
                   copilot={copilot}
@@ -342,7 +497,9 @@ function AnalysisView({
     );
   }
   return (
-    <div className="mx-auto max-w-3xl space-y-6 pb-10">
+    <div className="mx-auto max-w-3xl pb-10">
+      <Panel wash>
+        <div className="space-y-6 px-6 py-6">
       <h1 className="font-display text-3xl font-medium text-ivory">Interview analysis</h1>
       <p className="text-sm text-mist">{analysis.summary}</p>
       <ul className="grid gap-2 text-sm sm:grid-cols-2">
@@ -409,6 +566,8 @@ function AnalysisView({
           </ul>
         </section>
       ) : null}
+        </div>
+      </Panel>
     </div>
   );
 }

@@ -14,6 +14,7 @@ export default function InvitePage({ params }: { params: { token: string } }) {
   const [invite, setInvite] = useState<InviteRecord | null>(null);
   const [message, setMessage] = useState("");
   const [consent, setConsent] = useState(false);
+  const [faceConsent, setFaceConsent] = useState(false);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -36,7 +37,7 @@ export default function InvitePage({ params }: { params: { token: string } }) {
       await apiRequest(`/api/v1/interview-sessions/${opened.session_id}/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...bearer(opened.token) },
-        body: JSON.stringify({ consent: true }),
+        body: JSON.stringify({ consent: true, biometric_consent: faceConsent }),
       });
       rememberInterview(opened.session_id, opened.token, opened.role);
       router.push(`/interview/${opened.session_id}`);
@@ -62,6 +63,17 @@ export default function InvitePage({ params }: { params: { token: string } }) {
                   className="mt-1"
                 />
                 I agree to join this video interview and to have the conversation transcribed for the recruiter.
+              </label>
+              <label className="flex items-start gap-3 text-sm text-mist">
+                <input
+                  type="checkbox"
+                  checked={faceConsent}
+                  onChange={(event) => setFaceConsent(event.target.checked)}
+                  className="mt-1"
+                />
+                I agree to a face check. Sift compares a frame from my camera with the photo on my CV and with other
+                candidate photos already stored, then tells the interviewer whether I match. If I do not agree, the
+                interview still starts and no identity is assumed.
               </label>
               <button type="button" disabled={!consent || busy} onClick={() => void join()} className={buttonClass()}>
                 Join interview
