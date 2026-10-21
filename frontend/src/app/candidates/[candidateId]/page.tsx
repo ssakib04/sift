@@ -130,6 +130,9 @@ export default function CandidateProfilePage() {
               />
               <p className="text-mist">{candidate.email}</p>
               <p className="text-mist">Applied for {candidate.job_title || "an unpublished job"}</p>
+              {candidate.scheduled_label ? (
+                <p className="text-ivory">Interview scheduled for {candidate.scheduled_label}.</p>
+              ) : null}
               <p className="text-mist">
                 {candidate.aggregate_score !== null ? `Score ${candidate.aggregate_score.toFixed(2)}` : "No score"}
                 {quiz?.status === "submitted" && quiz.score !== null ? ` · Quiz ${quiz.score} / 100` : ""}

@@ -54,7 +54,10 @@ export default function InvitePage({ params }: { params: { token: string } }) {
         {invite ? (
           <Panel>
             <article className="space-y-4 p-6">
-              <PageHeader eyebrow={invite.company_name} title="You are invited to interview" lede={`Role: ${invite.job_title}`} />
+              <PageHeader eyebrow={invite.company_name} title="Congratulations" lede={`You have been selected to interview for ${invite.job_title}.`} />
+              {invite.scheduled_label ? (
+                <p className="text-sm text-ivory">Your interview is scheduled for {invite.scheduled_label}.</p>
+              ) : null}
               <label className="flex items-start gap-3 text-sm text-mist">
                 <input
                   type="checkbox"
