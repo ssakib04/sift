@@ -9,7 +9,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sift}
       POSTGRES_DB: ${POSTGRES_DB:-sift}
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -84,6 +84,7 @@ services:
       LIVEKIT_URL: ${LIVEKIT_URL:-}
       LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-}
       LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-}
+      AI_INTERVIEWER_ENABLED: ${AI_INTERVIEWER_ENABLED:-true}
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
@@ -154,6 +155,34 @@ services:
       postgres:
         condition: service_healthy
 
+  interviewer:
+    build: ./backend
+    command: python -m app.interviewer_worker start
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-sift}:${POSTGRES_PASSWORD:-sift}@postgres:5432/${POSTGRES_DB:-sift}
+      OLLAMA_BASE_URL: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      LIVEKIT_URL: ${LIVEKIT_URL:-}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-}
+      AI_INTERVIEWER_ENABLED: ${AI_INTERVIEWER_ENABLED:-true}
+      SPEECH_MODEL_DIR: /data/speech
+      PIPER_VOICE: ${PIPER_VOICE:-en_US-lessac-medium}
+      WHISPER_MODEL: ${WHISPER_MODEL:-base}
+      WHISPER_DEVICE: ${WHISPER_DEVICE:-cpu}
+      COMPANY_NAME: ${COMPANY_NAME:-Sift}
+    volumes:
+      - speech_data:/data/speech
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+
   coturn:
     image: coturn/coturn:4.6.2
     ports:
@@ -188,3 +217,4 @@ volumes:
   ollama_data:
   policy_data:
   cv_data:
+  speech_data:

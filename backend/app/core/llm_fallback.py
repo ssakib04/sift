@@ -88,6 +88,20 @@ class FallbackLLMManager:
         content = await provider.complete(prompt, system=system)
         return LLMResponse(content=content, tier=LLMTier.OLLAMA, fallback_used=False)
 
+    async def complete_live(self, prompt: str, *, system: str | None = None) -> LLMResponse:
+        """Ask Gemini for a short spoken line. A missed reply does not wait on another model."""
+        gemini_tier, gemini = self._providers[1]
+        brief = getattr(gemini, "complete_brief", None)
+        try:
+            if brief is not None:
+                content = await brief(prompt, system=system)
+            else:
+                content = await asyncio.wait_for(gemini.complete(prompt, system=system), timeout=4)
+        except Exception as exc:
+            logger.warning("llm_tier_failed tier=%s error_type=%s", gemini_tier.value, type(exc).__name__)
+            raise LLMFallbackExhaustedError([(gemini_tier, type(exc).__name__)]) from exc
+        return LLMResponse(content=content, tier=gemini_tier, fallback_used=False)
+
 
 class AnthropicProvider:
     def __init__(self, *, api_key: str, model: str, max_tokens: int = 4096) -> None:
@@ -138,6 +152,23 @@ class GeminiProvider:
         self._client: Any = None
 
     async def complete(self, prompt: str, *, system: str | None = None) -> str:
+        return await self._generate(prompt, system=system, max_output_tokens=None, attempts=self._attempts)
+
+    async def complete_brief(self, prompt: str, *, system: str | None = None) -> str:
+        """One short Gemini reply, without retries, for a live interview turn."""
+        return await asyncio.wait_for(
+            self._generate(prompt, system=system, max_output_tokens=200, attempts=1),
+            timeout=4,
+        )
+
+    async def _generate(
+        self,
+        prompt: str,
+        *,
+        system: str | None,
+        max_output_tokens: int | None,
+        attempts: int,
+    ) -> str:
         if not self._api_key:
             raise LLMProviderError("Gemini API key is not configured")
         if self._client is None:
@@ -145,12 +176,17 @@ class GeminiProvider:
 
             self._client = genai.Client(api_key=self._api_key)
         config = None
-        if system:
+        if system or max_output_tokens is not None:
             from google.genai import types
 
-            config = types.GenerateContentConfig(system_instruction=system)
+            options: dict[str, object] = {}
+            if system:
+                options["system_instruction"] = system
+            if max_output_tokens is not None:
+                options["max_output_tokens"] = max_output_tokens
+            config = types.GenerateContentConfig(**options)
         last_error: Exception | None = None
-        for attempt in range(self._attempts):
+        for attempt in range(attempts):
             try:
                 response = await self._client.aio.models.generate_content(
                     model=self._model,
@@ -159,7 +195,7 @@ class GeminiProvider:
                 )
             except Exception as exc:
                 last_error = exc
-                if attempt + 1 >= self._attempts or not _retryable_gemini_error(exc):
+                if attempt + 1 >= attempts or not _retryable_gemini_error(exc):
                     raise
                 await asyncio.sleep(1.5 * (attempt + 1))
                 continue

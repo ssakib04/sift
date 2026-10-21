@@ -245,6 +245,7 @@ export type InterviewDetail = {
   ended_at: string | null;
   processing_status: string;
   biometric_consented_at?: string | null;
+  conductor?: string;
 };
 
 export type IdentityProfile = {

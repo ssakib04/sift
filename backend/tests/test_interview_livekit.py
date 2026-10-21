@@ -2,7 +2,7 @@ import pytest
 from livekit.api import TokenVerifier
 
 from app.core.config import Settings
-from app.services.interview_livekit import issue_livekit_token
+from app.services.interview_livekit import INTERVIEWER_AGENT_NAME, TRANSCRIBER_AGENT_NAME, issue_livekit_token, room_agent_name
 from app.services.interview_rules import InterviewError
 
 _KEY = "APItestkeyvalue1"
@@ -37,6 +37,12 @@ def test_livekit_token_rejects_a_different_secret() -> None:
     _url, token = issue_livekit_token(_settings(), room="session-1", role="recruiter")
     with pytest.raises(Exception):
         TokenVerifier(_KEY, "other-secret-other-secret-other").verify(token)
+
+
+def test_the_recruiter_conducts_when_they_are_already_in_the_room() -> None:
+    assert room_agent_name(_settings(), recruiter_present=False) == INTERVIEWER_AGENT_NAME
+    assert room_agent_name(_settings(), recruiter_present=True) == TRANSCRIBER_AGENT_NAME
+    assert room_agent_name(_settings(ai_interviewer_enabled=False), recruiter_present=False) == TRANSCRIBER_AGENT_NAME
 
 
 def test_livekit_token_refuses_an_unconfigured_project() -> None:

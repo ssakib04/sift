@@ -49,6 +49,7 @@ class SessionDetailRead(BaseModel):
     ended_at: datetime | None
     processing_status: str = ""
     biometric_consented_at: datetime | None = None
+    conductor: str = ""
 
 
 class ProfileOverviewRead(BaseModel):

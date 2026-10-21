@@ -2,6 +2,7 @@
 
 import { ConnectionState, Room, RoomEvent, Track } from "livekit-client";
 import type { TranscriptTurn } from "@/lib/api";
+import { CartoonAvatar } from "@/components/interview/cartoon-avatar";
 import { PointerEvent as ReactPointerEvent, ReactNode, useEffect, useRef, useState } from "react";
 
 type VideoRoomProps = {
@@ -21,6 +22,10 @@ type VideoRoomProps = {
 
 function isPerson(identity: string): boolean {
   return identity === "recruiter" || identity === "candidate";
+}
+
+function publicationKind(publication: { kind?: Track.Kind; track?: { kind?: Track.Kind } | null }): string {
+  return publication.track?.kind || publication.kind || "";
 }
 
 function IconButton({
@@ -72,13 +77,21 @@ export function VideoRoom({
   const roomRef = useRef<Room | null>(null);
   const onTranscriptRef = useRef(onTranscript);
   onTranscriptRef.current = onTranscript;
+  const onQuizRef = useRef(onQuiz);
+  onQuizRef.current = onQuiz;
   const streamRef = useRef<MediaStream | null>(null);
+  const avatarTrackRef = useRef("");
+  const avatarCueRef = useRef(false);
+  const avatarAudioRef = useRef<HTMLAudioElement>(null);
   const dragRef = useRef<{ x: number; y: number; right: number; bottom: number } | null>(null);
   const [muted, setMuted] = useState(false);
   const [cameraOff, setCameraOff] = useState(false);
   const [status, setStatus] = useState("Connecting");
   const [attempt, setAttempt] = useState(0);
   const [hasRemote, setHasRemote] = useState(false);
+  const [avatar, setAvatar] = useState(false);
+  const [mouth, setMouth] = useState(0);
+  const [avatarStream, setAvatarStream] = useState<MediaStream | null>(null);
   const [selfPlace, setSelfPlace] = useState({ right: 16, bottom: 88 });
   void sessionId;
   void token;
@@ -96,23 +109,83 @@ export function VideoRoom({
     }
 
     function paintRemote(current: Room) {
-      const media = new MediaStream();
+      const videoTracks: MediaStreamTrack[] = [];
+      const personAudio: MediaStreamTrack[] = [];
+      const avatarTracks: MediaStreamTrack[] = [];
       current.remoteParticipants.forEach((participant) => {
-        if (!isPerson(participant.identity)) {
-          return;
-        }
         participant.trackPublications.forEach((publication) => {
           const track = publication.track?.mediaStreamTrack;
-          if (track) {
-            media.addTrack(track);
+          if (!track) {
+            return;
+          }
+          if (track.kind === "video" && isPerson(participant.identity)) {
+            videoTracks.push(track);
+          } else if (track.kind === "audio" && isPerson(participant.identity)) {
+            personAudio.push(track);
+          } else if (track.kind === "audio" && !isPerson(participant.identity)) {
+            avatarTracks.push(track);
           }
         });
       });
-      if (remoteRef.current) {
-        remoteRef.current.srcObject = media.getTracks().length > 0 ? media : null;
+      const videoTrack = videoTracks[0];
+      const avatarAudio = avatarTracks[0];
+      if (videoTrack) {
+        const media = new MediaStream([videoTrack, ...personAudio]);
+        if (remoteRef.current) {
+          remoteRef.current.srcObject = media;
+        }
+        avatarTrackRef.current = "";
+        if (!cancelled) {
+          setAvatar(false);
+          setAvatarStream(null);
+          setHasRemote(true);
+        }
+        return;
       }
+      if (avatarAudio) {
+        if (remoteRef.current) {
+          remoteRef.current.srcObject = null;
+        }
+        if (avatarTrackRef.current !== avatarAudio.id) {
+          const media = new MediaStream([avatarAudio]);
+          avatarTrackRef.current = avatarAudio.id;
+          if (avatarAudioRef.current) {
+            avatarAudioRef.current.srcObject = media;
+            void avatarAudioRef.current.play().catch(() => undefined);
+          }
+          if (!cancelled) {
+            setAvatarStream(media);
+          }
+        }
+        if (!cancelled) {
+          setAvatar(true);
+          setHasRemote(true);
+        }
+        return;
+      }
+      if (avatarAudioRef.current) {
+        avatarAudioRef.current.srcObject = null;
+      }
+      if (remoteRef.current) {
+        remoteRef.current.srcObject = null;
+      }
+      if (personAudio.length > 0) {
+        if (remoteRef.current) {
+          remoteRef.current.srcObject = new MediaStream(personAudio);
+        }
+        avatarTrackRef.current = "";
+        if (!cancelled) {
+          setAvatar(false);
+          setAvatarStream(null);
+          setHasRemote(true);
+        }
+        return;
+      }
+      avatarTrackRef.current = "";
       if (!cancelled) {
-        setHasRemote(media.getTracks().length > 0);
+        setAvatar(avatarCueRef.current);
+        setAvatarStream(null);
+        setHasRemote(avatarCueRef.current);
       }
     }
 
@@ -123,8 +196,18 @@ export function VideoRoom({
       if (current.state !== ConnectionState.Connected) {
         return "Connecting";
       }
-      const people = [...current.remoteParticipants.values()].filter((participant) => isPerson(participant.identity));
-      return people.length === 0 ? "Waiting for the other person" : "Connected";
+      const remotes = [...current.remoteParticipants.values()];
+      const interviewerHere =
+        avatarCueRef.current || remotes.some((participant) => !isPerson(participant.identity));
+      const people = remotes.filter((participant) => {
+        if (isPerson(participant.identity)) {
+          return true;
+        }
+        return [...participant.trackPublications.values()].some(
+          (publication) => publicationKind(publication) === Track.Kind.Audio,
+        );
+      });
+      return interviewerHere || people.length > 0 ? "Connected" : "Waiting for the other person";
     }
 
     async function start() {
@@ -155,6 +238,12 @@ export function VideoRoom({
         connection.on(RoomEvent.ConnectionStateChanged, () => report(describe(connection)));
         connection.on(RoomEvent.ParticipantConnected, () => report(describe(connection)));
         connection.on(RoomEvent.ParticipantDisconnected, () => {
+          const agentHere = [...connection.remoteParticipants.values()].some(
+            (participant) => !isPerson(participant.identity),
+          );
+          if (!agentHere) {
+            avatarCueRef.current = false;
+          }
           paintRemote(connection);
           report(describe(connection));
         });
@@ -163,6 +252,24 @@ export function VideoRoom({
         connection.on(RoomEvent.TrackMuted, () => paintRemote(connection));
         connection.on(RoomEvent.TrackUnmuted, () => paintRemote(connection));
         connection.on(RoomEvent.DataReceived, (payload, _participant, _kind, topic) => {
+          if (topic === "interview") {
+            try {
+              const notice = JSON.parse(new TextDecoder().decode(payload)) as { type?: string };
+              if (notice.type === "avatar" && !cancelled) {
+                avatarCueRef.current = true;
+                setAvatar(true);
+                setHasRemote(true);
+                report(describe(connection));
+                void connection.startAudio();
+              }
+              if (notice.type === "quiz") {
+                onQuizRef.current?.();
+              }
+            } catch {
+              return;
+            }
+            return;
+          }
           if (topic !== "transcript") {
             return;
           }
@@ -198,6 +305,7 @@ export function VideoRoom({
         }
         paintRemote(connection);
         report(describe(connection));
+        void connection.startAudio();
       } catch {
         report("The camera or microphone could not be opened.");
       }
@@ -212,6 +320,56 @@ export function VideoRoom({
       streamRef.current = null;
     };
   }, [attempt, livekitToken, livekitUrl, onConnection]);
+
+  useEffect(() => {
+    if (!avatarStream) {
+      setMouth(0);
+      return;
+    }
+    const context = new AudioContext();
+    const source = context.createMediaStreamSource(avatarStream);
+    const analyser = context.createAnalyser();
+    const silent = context.createGain();
+    analyser.fftSize = 2048;
+    analyser.smoothingTimeConstant = 0.35;
+    silent.gain.value = 0;
+    source.connect(analyser);
+    analyser.connect(silent);
+    silent.connect(context.destination);
+    void context.resume();
+    const freq = new Uint8Array(analyser.frequencyBinCount);
+    let frame = 0;
+    let stop = false;
+    let level = 0;
+
+    function tick() {
+      if (stop) {
+        return;
+      }
+      analyser.getByteFrequencyData(freq);
+      const binHz = context.sampleRate / analyser.fftSize;
+      const start = Math.max(0, Math.floor(250 / binHz));
+      const end = Math.min(freq.length, Math.ceil(3400 / binHz));
+      let sum = 0;
+      for (let index = start; index < end; index += 1) {
+        sum += freq[index];
+      }
+      const average = sum / Math.max(1, end - start) / 255;
+      const target = Math.min(1, Math.max(0, (average - 0.035) / 0.16) ** 0.7);
+      const follow = target > level ? 0.62 : 0.22;
+      level += (target - level) * follow;
+      setMouth(level);
+      frame = requestAnimationFrame(tick);
+    }
+
+    tick();
+    return () => {
+      stop = true;
+      cancelAnimationFrame(frame);
+      source.disconnect();
+      void context.close();
+    };
+  }, [avatarStream]);
 
   useEffect(() => {
     if (!captureFrames || !onFrame) {
@@ -326,16 +484,25 @@ export function VideoRoom({
   }
 
   const blocked = status.startsWith("The camera") || status.startsWith("The video");
-  const remoteLabel = role === "recruiter" ? "Candidate" : "Recruiter";
+  const remoteLabel = avatar ? "AI interviewer" : role === "recruiter" ? "Candidate" : "Recruiter";
 
   return (
-    <div ref={stageRef} className="relative h-full min-h-0 w-full overflow-hidden">
+    <div
+      ref={stageRef}
+      className="relative h-full min-h-0 w-full overflow-hidden"
+      onPointerDown={() => {
+        void roomRef.current?.startAudio();
+        void avatarAudioRef.current?.play().catch(() => undefined);
+      }}
+    >
       <video
         ref={remoteRef}
         autoPlay
         playsInline
-        className={`absolute inset-0 h-full w-full object-cover ${hasRemote ? "" : "hidden"}`}
+        className={`absolute inset-0 h-full w-full object-cover ${hasRemote && !avatar ? "" : "hidden"}`}
       />
+      <audio ref={avatarAudioRef} autoPlay playsInline />
+      {avatar ? <CartoonAvatar mouth={mouth} /> : null}
       <div
         className={
           hasRemote

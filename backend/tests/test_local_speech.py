@@ -1,0 +1,137 @@
+import math
+import struct
+from pathlib import Path
+
+import pytest
+
+from app.services.local_speech import (
+    BargeMeter,
+    SpeechGate,
+    is_audio_kind,
+    join_segment_text,
+    pcm16_rms,
+    float_to_pcm16,
+    pcm16_to_float,
+    pcm_from_chunks,
+    resample_linear,
+    split_pcm16,
+    trim_trailing_silence,
+    voice_paths,
+)
+
+
+def _tone(samples: int, rate: int, amplitude: float) -> bytes:
+    pcm = bytearray()
+    for index in range(samples):
+        value = int(amplitude * 32767 * math.sin(2 * math.pi * 440 * index / rate))
+        pcm += struct.pack("<h", value)
+    return bytes(pcm)
+
+
+def test_livekit_audio_kind_is_the_integer_one() -> None:
+    class _Named:
+        name = "KIND_AUDIO"
+
+    assert is_audio_kind(1) is True
+    assert is_audio_kind(_Named()) is True
+    assert is_audio_kind(2) is False
+    assert is_audio_kind("video") is False
+
+
+def test_rms_is_silent_for_zeros_and_loud_for_a_tone() -> None:
+    assert pcm16_rms(b"") == 0
+    assert pcm16_rms(b"\x00\x00" * 160) == 0
+    assert pcm16_rms(_tone(1600, 16000, 0.5)) > 0.2
+
+
+def test_float_conversion_and_resample_keep_the_duration() -> None:
+    pcm = _tone(16000, 16000, 0.25)
+    samples = pcm16_to_float(pcm)
+    assert len(samples) == 16000
+    assert max(samples) > 0.2
+    assert pcm16_to_float(float_to_pcm16([0.5, -0.5]))[0] > 0.4
+    stretched = resample_linear(samples[:1600], 16000, 8000)
+    assert len(stretched) == 800
+
+
+def test_split_pcm16_pads_the_last_frame() -> None:
+    frames = split_pcm16(b"\x01\x00" * 5, 4)
+    assert len(frames) == 2
+    assert len(frames[0]) == 8
+    assert len(frames[1]) == 8
+    assert frames[1].endswith(b"\x00\x00")
+
+
+def test_speech_gate_returns_audio_after_a_pause() -> None:
+    gate = SpeechGate(sample_rate=16000, speech_ms=200, silence_ms=400, max_ms=5000)
+    assert gate.push(b"\x00\x00" * 1600) is None
+    heard = None
+    for _ in range(10):
+        heard = gate.push(_tone(1600, 16000, 0.4))
+        if heard is not None:
+            break
+    assert heard is None
+    finished = None
+    for _ in range(8):
+        finished = gate.push(b"\x00\x00" * 1600)
+        if finished is not None:
+            break
+    assert finished is not None
+    assert pcm16_rms(finished) > 0.05
+
+
+def test_speech_gate_waits_five_seconds_and_keeps_a_long_answer_open() -> None:
+    gate = SpeechGate(sample_rate=1000)
+    assert gate.push(_tone(250, 1000, 0.4)) is None
+    assert gate.push(b"\x00\x00" * 4999) is None
+    assert gate.push(_tone(200, 1000, 0.4)) is None
+    assert gate.push(b"\x00\x00" * 5000) is not None
+
+    ongoing = SpeechGate(sample_rate=1000)
+    for _ in range(4):
+        assert ongoing.push(_tone(60_000, 1000, 0.4)) is None
+    assert ongoing.push(_tone(60_000, 1000, 0.4)) is not None
+
+
+def test_trailing_silence_is_trimmed_before_transcription() -> None:
+    speech = _tone(1600, 16000, 0.4)
+    quiet = b"\x00\x00" * 16000
+    trimmed = trim_trailing_silence(speech + quiet, 16000)
+    assert len(trimmed) < len(speech) + 16000
+    assert len(trimmed) > len(speech)
+
+
+def test_barge_meter_needs_a_sustained_loud_stretch() -> None:
+    meter = BargeMeter(sample_rate=16000, threshold=0.05, hold_ms=200)
+    assert meter.push(_tone(1600, 16000, 0.01)) is False
+    assert meter.push(_tone(1600, 16000, 0.4)) is False
+    assert meter.push(_tone(1600, 16000, 0.4)) is True
+    meter.reset()
+    assert meter.push(_tone(1600, 16000, 0.4)) is False
+
+
+def test_segment_text_and_piper_chunks() -> None:
+    class _Segment:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+    class _Chunk:
+        def __init__(self) -> None:
+            self.audio_int16_bytes = b"\x01\x00\x02\x00"
+            self.sample_rate = 22050
+
+    assert join_segment_text([_Segment(" Hello "), _Segment(" "), _Segment("there")]) == "Hello there"
+    audio, rate = pcm_from_chunks([_Chunk(), b"\x03\x00"])
+    assert audio == b"\x01\x00\x02\x00\x03\x00"
+    assert rate == 22050
+
+
+def test_voice_paths_use_the_local_directory() -> None:
+    model, config = voice_paths(Path("/voices"), "en_US-lessac-medium")
+    assert model.name == "en_US-lessac-medium.onnx"
+    assert config.name == "en_US-lessac-medium.onnx.json"
+
+
+def test_voice_paths_reject_an_unknown_voice() -> None:
+    with pytest.raises(ValueError):
+        voice_paths(Path("/voices"), "other")

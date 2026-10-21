@@ -187,6 +187,7 @@ async def read_session(
         ended_at=detail.ended_at,
         processing_status=detail.processing_status,
         biometric_consented_at=detail.biometric_consented_at,
+        conductor=detail.conductor,
     )
 
 

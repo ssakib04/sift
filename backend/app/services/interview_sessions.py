@@ -23,7 +23,7 @@ from app.models.candidate import (
 from app.models.job import JobChecklistQuery, JobVersion
 from app.services.cv_claims import verify_stored_claims
 from app.services.interview_analysis import AnalysisDraft, draft_for_transcript
-from app.services.interview_livekit import dispatch_transcriber, issue_livekit_token
+from app.services.interview_livekit import dispatch_room_agent, issue_livekit_token, room_has_recruiter
 from app.services.interview_transcript import TranscriptWrite, accepted_speaker, spoken_window, transcript_write
 from app.services.interview_copilot import (
     CopilotAnswer,
@@ -40,6 +40,7 @@ from app.services.interview_rules import (
     bind_ice_host,
     can_store_audio,
     copilot_cache_matches,
+    end_clock,
     end_for_role,
     format_transcript,
     ice_servers,
@@ -77,6 +78,7 @@ class SessionDetail:
     ended_at: datetime | None
     processing_status: str
     biometric_consented_at: datetime | None
+    conductor: str
 
 
 async def open_candidate_session(
@@ -137,6 +139,7 @@ async def session_detail(db: AsyncSession, settings: Settings, claims: SessionCl
         ended_at=row.ended_at,
         processing_status=row.processing_status or "",
         biometric_consented_at=row.biometric_consented_at,
+        conductor=row.conductor or "",
     )
 
 
@@ -162,10 +165,14 @@ async def start_interview(
             row.biometric_consented_at = datetime.now(UTC)
     await db.commit()
     if previous != "started" and row.status == "started":
+        settings = get_settings()
         try:
-            await dispatch_transcriber(get_settings(), str(row.id))
+            recruiter_present = await room_has_recruiter(settings, str(row.id))
+            row.conductor = "recruiter" if recruiter_present or not settings.ai_interviewer_enabled else "agent"
+            await db.commit()
+            await dispatch_room_agent(settings, str(row.id), recruiter_present=recruiter_present)
         except Exception:
-            logger.exception("transcriber_dispatch_failed")
+            logger.exception("agent_dispatch_failed")
     return row.status
 
 
@@ -185,6 +192,8 @@ async def end_interview(db: AsyncSession, llm: FallbackLLMManager, claims: Sessi
 async def list_transcript(db: AsyncSession, claims: SessionClaims) -> list[TranscriptSegment]:
     assert_recruiter(claims.role)
     row, _title, _job_id = await _require(db, claims)
+    if row.conductor == "agent":
+        return []
     return await _segment_rows(db, row.id)
 
 
@@ -297,6 +306,30 @@ async def save_spoken_line(session_id: str, speaker: str, text: str, *, final: b
         db.add(segment)
         await db.commit()
         return segment
+
+
+async def checklist_questions(db: AsyncSession, version_id: uuid.UUID) -> list[str]:
+    return await _questions(db, version_id)
+
+
+async def close_interview_from_agent(session_id: str) -> None:
+    """End the call after the AI interviewer has asked its questions, then score the transcript."""
+    try:
+        interview_id = uuid.UUID(session_id)
+    except ValueError:
+        return
+    from app.core.database import SessionFactory
+    from app.core.llm_fallback import create_fallback_manager
+
+    async with SessionFactory() as db:
+        row = await db.get(InterviewSession, interview_id)
+        if row is None or row.status != "started":
+            return
+        clock = end_clock(_clock(row), now=datetime.now(UTC))
+        await _finalize_open_lines(db, row.id)
+        _apply_clock(row, clock)
+        await db.commit()
+    _schedule_analysis(interview_id, create_fallback_manager())
 
 
 async def finish_open_line(session_id: str, speaker: str) -> None:

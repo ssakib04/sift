@@ -97,6 +97,33 @@ async def test_all_tiers_fail_raises_single_error() -> None:
     assert len(claude.calls) == len(gemini.calls) == len(ollama.calls) == 1
 
 
+async def test_complete_live_skips_claude() -> None:
+    claude = StubProvider(content="from claude")
+    gemini = StubProvider(content="from gemini")
+    ollama = StubProvider(content="from ollama")
+    result = await _manager(claude, gemini, ollama).complete_live("ask one question")
+
+    assert result.content == "from gemini"
+    assert result.tier is LLMTier.GEMINI
+    assert claude.calls == []
+    assert len(gemini.calls) == 1
+    assert ollama.calls == []
+
+
+@pytest.mark.asyncio
+async def test_complete_live_does_not_wait_on_another_model() -> None:
+    claude = StubProvider(content="from claude")
+    gemini = StubProvider(error=RuntimeError("gemini down"))
+    ollama = StubProvider(content="from ollama")
+
+    with pytest.raises(LLMFallbackExhaustedError):
+        await _manager(claude, gemini, ollama).complete_live("ask one question")
+
+    assert claude.calls == []
+    assert ollama.calls == []
+    assert len(gemini.calls) == 1
+
+
 @pytest.mark.asyncio
 async def test_complete_local_skips_cloud_tiers() -> None:
     claude = StubProvider(content="from claude")
