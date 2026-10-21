@@ -74,6 +74,7 @@ export type CandidateRecord = {
   job_id: string | null;
   job_title: string;
   scheduled_label?: string;
+  created_at: string;
 };
 
 export type CvUploadResult = {

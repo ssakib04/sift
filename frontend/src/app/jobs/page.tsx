@@ -248,7 +248,7 @@ function JobsPageContent() {
     <AppShell>
       <div className="mx-auto max-w-3xl space-y-8">
         <PageHeader eyebrow="Jobs" title="Create a locked job profile" />
-        <section className="space-y-3 rounded-card border border-ivory/10 bg-night/65 p-5 backdrop-blur-2xl">
+        <section className="space-y-3 relative overflow-hidden rounded-card border border-white/10 bg-[linear-gradient(180deg,rgb(72_32_26/0.5),rgb(28_12_12/0.62))] p-5 shadow-[inset_0_1px_0_rgb(255_220_196/0.28),0_12px_28px_rgb(6_2_2/0.2)] backdrop-blur-xl">
           <h2 className="font-display text-2xl font-medium text-ivory">Gmail inbox</h2>
           <p className="text-sm text-mist">
             Pull unread CV emails from the shared apply mailbox, match them to locked jobs, and score them.
@@ -262,7 +262,7 @@ function JobsPageContent() {
             {busy ? "Checking inbox..." : "Check inbox"}
           </button>
         </section>
-        <section className="space-y-3 rounded-card border border-ivory/10 bg-night/65 p-5 backdrop-blur-2xl">
+        <section className="space-y-3 relative overflow-hidden rounded-card border border-white/10 bg-[linear-gradient(180deg,rgb(72_32_26/0.5),rgb(28_12_12/0.62))] p-5 shadow-[inset_0_1px_0_rgb(255_220_196/0.28),0_12px_28px_rgb(6_2_2/0.2)] backdrop-blur-xl">
           <h2 className="font-display text-2xl font-medium text-ivory">Open an existing job</h2>
           <p className="text-sm text-mist">
             Open a locked job to review applicants after checking the inbox.
@@ -298,7 +298,7 @@ function JobsPageContent() {
             </ul>
           )}
         </section>
-        <form onSubmit={onCreate} className="grid gap-4 rounded-card border border-ivory/10 bg-night/65 p-5 backdrop-blur-2xl">
+        <form onSubmit={onCreate} className="grid gap-4 relative overflow-hidden rounded-card border border-white/10 bg-[linear-gradient(180deg,rgb(72_32_26/0.5),rgb(28_12_12/0.62))] p-5 shadow-[inset_0_1px_0_rgb(255_220_196/0.28),0_12px_28px_rgb(6_2_2/0.2)] backdrop-blur-xl">
           <label className="grid gap-1 text-sm">
             Title
             <input name="title" required className="rounded-control border border-ivory/15 bg-night/50 px-3 py-2 text-ivory" />
@@ -364,7 +364,7 @@ function JobsPageContent() {
           </button>
         </form>
         {latest ? (
-          <section className="space-y-4 rounded-card border border-ivory/10 bg-night/65 p-5 backdrop-blur-2xl">
+          <section className="space-y-4 relative overflow-hidden rounded-card border border-white/10 bg-[linear-gradient(180deg,rgb(72_32_26/0.5),rgb(28_12_12/0.62))] p-5 shadow-[inset_0_1px_0_rgb(255_220_196/0.28),0_12px_28px_rgb(6_2_2/0.2)] backdrop-blur-xl">
             <div className="flex items-center justify-between gap-3">
               <h2 className="font-display text-2xl font-medium text-ivory">
                 {job?.title} · v{latest.version_number} · {latest.status}

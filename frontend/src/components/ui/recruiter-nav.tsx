@@ -32,16 +32,16 @@ export function RecruiterNav() {
   }
 
   return (
-    <header className="flex flex-col gap-6 px-6 pt-6 lg:sticky lg:top-0 lg:h-screen lg:w-60 lg:justify-between lg:px-6 lg:py-10">
+    <header className="flex flex-col gap-4 px-4 pt-4 lg:sticky lg:top-0 lg:h-screen lg:w-40 lg:shrink-0 lg:justify-between lg:px-3 lg:py-6">
       <div className="flex items-center justify-between gap-4 max-lg:pr-14 lg:block">
-        <Link href="/" className="font-display text-3xl font-medium tracking-[-0.03em] text-ivory">
+        <Link href="/" className="font-display text-2xl font-medium tracking-[-0.03em] text-ivory">
           Sift
         </Link>
         <button type="button" onClick={signOut} className="text-sm text-mist hover:text-ivory lg:hidden">
           Sign out
         </button>
       </div>
-      <nav className="flex gap-1 overflow-x-auto lg:mt-10 lg:flex-1 lg:flex-col" aria-label="Recruiter">
+      <nav className="flex gap-1 overflow-x-auto lg:mt-6 lg:flex-1 lg:flex-col" aria-label="Recruiter">
         {LINKS.map((link) => {
           const current = isCurrent(pathname, link.href);
           return (
@@ -49,7 +49,7 @@ export function RecruiterNav() {
               key={link.href}
               href={link.href}
               aria-current={current ? "page" : undefined}
-              className={`whitespace-nowrap rounded-control px-3 py-2.5 text-sm font-semibold ${
+              className={`whitespace-nowrap rounded-control px-2.5 py-2 text-sm font-semibold ${
                 current ? "bg-ivory/10 text-ivory" : "text-mist hover:bg-ivory/5 hover:text-ivory"
               }`}
             >

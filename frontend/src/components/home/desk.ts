@@ -6,6 +6,10 @@ export type DeskRole = {
   id: string;
   title: string;
   versionLabel: string;
+  versionNumber: number;
+  checks: number;
+  applicants: number;
+  posted: boolean;
   status: string;
   tone: PillTone;
   summary: string;
@@ -23,15 +27,25 @@ export type DeskCandidate = {
   tone: PillTone;
 };
 
+export type DeskInterview = {
+  id: string;
+  name: string;
+  role: string;
+  when: string;
+  href: string;
+};
+
 export type DeskSnapshot = {
-  source: "live" | "sample";
+  source: "live";
   featured: DeskRole | null;
   roles: DeskRole[];
   review: DeskCandidate[];
+  interviews: DeskInterview[];
   counts: {
-    roles: number;
-    locked: number;
-    waiting: number;
+    activeJobs: number;
+    applicants: number;
+    interviews: number;
+    review: number;
   };
 };
 
@@ -76,19 +90,24 @@ function summarize(description: string): string {
   return `${clean.slice(0, 177).trimEnd()}…`;
 }
 
-function toRole(job: JobRecord): DeskRole | null {
+function toRole(job: JobRecord, applicants: number): DeskRole | null {
   const version = latestVersion(job);
   if (!version) {
     return null;
   }
-  const meta = [`v${version.version_number}`, `${version.queries.length} checks`];
-  if (version.posting_status) {
+  const posted = version.posting_status === "live";
+  const meta = [`Version ${version.version_number}`, `${version.queries.length} checks`, `${applicants} applicants`];
+  if (version.posting_status && version.posting_status !== "live") {
     meta.push(postingLabel(version.posting_status));
   }
   return {
     id: job.id,
     title: job.title,
     versionLabel: `Version ${version.version_number}`,
+    versionNumber: version.version_number,
+    checks: version.queries.length,
+    applicants,
+    posted,
     status: version.status,
     tone: toneFor(version.status),
     summary: summarize(version.description),
@@ -115,27 +134,62 @@ function toCandidate(candidate: CandidateRecord): DeskCandidate {
   };
 }
 
-export function snapshotFromApi(jobs: JobRecord[], groups: CandidateGroup[]): DeskSnapshot | null {
-  const candidates = groups.flatMap((group) => group.candidates);
-  if (jobs.length === 0 && candidates.length === 0) {
+function toInterview(candidate: CandidateRecord): DeskInterview | null {
+  const when = candidate.scheduled_label?.trim() ?? "";
+  if (!when) {
     return null;
   }
-  const roles = jobs.map(toRole).filter((role): role is DeskRole => role !== null);
+  return {
+    id: candidate.id,
+    name: candidate.full_name || "Unnamed",
+    role: candidate.job_title || "Unassigned role",
+    when,
+    href: `/candidates/${candidate.id}`,
+  };
+}
+
+export const emptySnapshot: DeskSnapshot = {
+  source: "live",
+  featured: null,
+  roles: [],
+  review: [],
+  interviews: [],
+  counts: { activeJobs: 0, applicants: 0, interviews: 0, review: 0 },
+};
+
+export function snapshotFromApi(jobs: JobRecord[], groups: CandidateGroup[]): DeskSnapshot {
+  const candidates = groups.flatMap((group) => group.candidates);
+  if (jobs.length === 0 && candidates.length === 0) {
+    return emptySnapshot;
+  }
+  const applicantsFor = new Map<string, number>();
+  for (const candidate of candidates) {
+    if (!candidate.job_id) {
+      continue;
+    }
+    applicantsFor.set(candidate.job_id, (applicantsFor.get(candidate.job_id) ?? 0) + 1);
+  }
+  const roles = jobs
+    .map((job) => toRole(job, applicantsFor.get(job.id) ?? 0))
+    .filter((role): role is DeskRole => role !== null);
   const featured = roles.find((role) => role.status === "locked") ?? roles[0] ?? null;
   const review = candidates
     .filter(needsReview)
     .sort((left, right) => (right.aggregate_score ?? -1) - (left.aggregate_score ?? -1))
     .slice(0, 5)
     .map(toCandidate);
+  const interviews = candidates.map(toInterview).filter((item): item is DeskInterview => item !== null).slice(0, 4);
   return {
     source: "live",
     featured,
-    roles: roles.filter((role) => role.id !== featured?.id),
+    roles,
     review,
+    interviews,
     counts: {
-      roles: jobs.length,
-      locked: roles.filter((role) => role.status === "locked").length,
-      waiting: candidates.filter((candidate) => !candidate.invited).length,
+      activeJobs: roles.filter((role) => role.status === "locked").length,
+      applicants: candidates.length,
+      interviews: candidates.filter((candidate) => (candidate.scheduled_label ?? "").trim().length > 0).length,
+      review: candidates.filter(needsReview).length,
     },
   };
 }

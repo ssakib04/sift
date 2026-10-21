@@ -151,7 +151,7 @@ export function PersistentChatbot() {
   return (
     <div className="fixed bottom-5 right-5 z-50">
       {open ? (
-        <section className="mb-3 flex h-[32rem] w-[24rem] max-w-[calc(100vw-2.5rem)] flex-col rounded-card border border-ivory/10 bg-night/75 text-ivory shadow-lift backdrop-blur-2xl">
+        <section className="relative mb-3 flex h-[32rem] w-[24rem] max-w-[calc(100vw-2.5rem)] flex-col overflow-hidden rounded-card border border-white/15 bg-[linear-gradient(180deg,rgb(92_42_34/0.55),rgb(36_16_14/0.68))] text-ivory shadow-[inset_0_1px_0_rgb(255_228_206/0.4),0_18px_40px_rgb(6_2_2/0.28)] backdrop-blur-xl">
           <header className="flex items-center justify-between border-b border-ivory/10 px-4 py-3">
             <div>
               <p className="text-xs uppercase tracking-[0.16em] text-mist">Copilot</p>

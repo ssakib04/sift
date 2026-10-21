@@ -1,14 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
-import { snapshotFromApi, type DeskCandidate, type DeskRole, type DeskSnapshot } from "@/components/home/desk";
-import { sampleSnapshot } from "@/components/home/sample-desk";
+import { ApplicationsChart } from "@/components/home/applications-chart";
+import {
+  snapshotFromApi,
+  type DeskCandidate,
+  type DeskInterview,
+  type DeskRole,
+  type DeskSnapshot,
+} from "@/components/home/desk";
 import { ButtonLink } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
-import { PageHeader } from "@/components/ui/page-header";
-import { Panel } from "@/components/ui/panel";
 import { StatusPill } from "@/components/ui/status-pill";
 import { ApiError, CandidateGroup, JobRecord, apiRequest } from "@/lib/api";
 
@@ -25,14 +29,43 @@ function greetingFor(date: Date): string {
   return "Good evening";
 }
 
+function roleLabel(role: DeskRole): string {
+  if (role.posted) {
+    return "Posted";
+  }
+  if (role.status === "locked") {
+    return "Locked";
+  }
+  if (role.status === "draft") {
+    return "Draft";
+  }
+  return role.status.replaceAll("_", " ");
+}
+
+function nextAction(role: DeskRole): string {
+  if (role.status === "draft") {
+    return "Review job";
+  }
+  if (role.status === "locked") {
+    return "View job";
+  }
+  return "Open role";
+}
+
 export function RecruiterHome() {
   const [phase, setPhase] = useState<Phase>("loading");
   const [snapshot, setSnapshot] = useState<DeskSnapshot | null>(null);
+  const [appliedAt, setAppliedAt] = useState<string[]>([]);
   const [message, setMessage] = useState("");
   const [greeting, setGreeting] = useState("Welcome back");
+  const [deskDate, setDeskDate] = useState("");
 
   useEffect(() => {
-    setGreeting(greetingFor(new Date()));
+    const now = new Date();
+    setGreeting(greetingFor(now));
+    setDeskDate(
+      new Intl.DateTimeFormat("en-US", { weekday: "long", month: "short", day: "numeric" }).format(now),
+    );
   }, []);
 
   useEffect(() => {
@@ -42,7 +75,8 @@ export function RecruiterHome() {
         if (cancelled) {
           return;
         }
-        setSnapshot(snapshotFromApi(jobs, groups) ?? sampleSnapshot);
+        setSnapshot(snapshotFromApi(jobs, groups));
+        setAppliedAt(groups.flatMap((group) => group.candidates.map((candidate) => candidate.created_at)));
         setPhase("ready");
       })
       .catch((error: unknown) => {
@@ -58,98 +92,221 @@ export function RecruiterHome() {
   }, []);
 
   return (
-    <div className="space-y-8" aria-busy={phase === "loading"}>
-      <PageHeader
-        eyebrow="Recruiter desk"
-        title={greeting}
-        lede="Roles, applicants, and the next decision, held in one quiet place."
-      />
+    <div className="relative space-y-4" aria-busy={phase === "loading"}>
+      <header className="flex flex-wrap items-center justify-between gap-6 pr-16">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-mist">
+            Recruiter desk{deskDate ? ` · ${deskDate}` : ""}
+          </p>
+          <h1 className="mt-2 font-display text-4xl font-medium leading-none tracking-[-0.03em] text-ivory sm:text-5xl">
+            {greeting}
+          </h1>
+          <p className="mt-2 text-sm text-mist">Here is where your hiring stands today.</p>
+        </div>
+        {phase === "ready" && snapshot ? <DeskPulse snapshot={snapshot} /> : null}
+      </header>
       {phase === "loading" ? <p className="text-sm text-mist">Opening the desk…</p> : null}
       {phase === "error" ? (
-        <Panel className="p-8">
-          <EmptyState
-            title="The desk is unavailable"
-            detail={message}
-            actionHref="/jobs"
-            actionLabel="Open jobs"
-          />
-        </Panel>
+        <Glass className="p-8">
+          <EmptyState title="The desk is unavailable" detail={message} actionHref="/jobs" actionLabel="Open jobs" />
+        </Glass>
       ) : null}
-      {phase === "ready" && snapshot ? <Desk snapshot={snapshot} /> : null}
+      {phase === "ready" && snapshot ? <Desk snapshot={snapshot} appliedAt={appliedAt} /> : null}
     </div>
   );
 }
 
-function Desk({ snapshot }: { snapshot: DeskSnapshot }) {
+function Glass({
+  children,
+  elevation = "primary",
+  className = "",
+}: {
+  children: ReactNode;
+  elevation?: "primary" | "secondary";
+  className?: string;
+}) {
+  const face =
+    elevation === "primary"
+      ? "border-white/15 bg-[linear-gradient(180deg,rgb(92_42_34/0.46),rgb(36_16_14/0.58))] shadow-[inset_0_1px_0_rgb(255_228_206/0.45),inset_0_0_24px_rgb(240_160_75/0.06),0_18px_40px_rgb(6_2_2/0.22)]"
+      : "border-white/10 bg-[linear-gradient(180deg,rgb(72_32_26/0.5),rgb(28_12_12/0.62))] shadow-[inset_0_1px_0_rgb(255_220_196/0.28),0_12px_28px_rgb(6_2_2/0.2)]";
   return (
-    <div className="space-y-6">
-      {snapshot.source === "sample" ? (
-        <p className="text-sm text-mist">This is a sample desk. It clears as soon as a role or candidate is on file.</p>
-      ) : null}
-      <div className="grid items-start gap-6 lg:grid-cols-12">
-        <div className="lg:col-span-8">
+    <section className={`relative overflow-hidden rounded-card border backdrop-blur-xl ${face} ${className}`}>
+      <span aria-hidden className="pointer-events-none absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-peach/70 to-transparent" />
+      <div className="relative">{children}</div>
+    </section>
+  );
+}
+
+function Desk({ snapshot, appliedAt }: { snapshot: DeskSnapshot; appliedAt: readonly string[] }) {
+  const metrics = [
+    {
+      label: "Active jobs",
+      value: snapshot.counts.activeJobs,
+      detail: "Currently open",
+      href: "/jobs",
+      icon: <BriefcaseIcon />,
+    },
+    {
+      label: "Applicants",
+      value: snapshot.counts.applicants,
+      detail: "Across all jobs",
+      href: "/candidates",
+      icon: <PeopleIcon />,
+    },
+    {
+      label: "Interviews",
+      value: snapshot.counts.interviews,
+      detail: "Scheduled",
+      href: "/candidates",
+      icon: <CalendarIcon />,
+    },
+    {
+      label: "Need review",
+      value: snapshot.counts.review,
+      detail: "Pending decisions",
+      href: "/candidates",
+      icon: <ClockIcon />,
+    },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <Glass>
+        <ApplicationsChart appliedAt={appliedAt} />
+      </Glass>
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {metrics.map((metric) => (
+          <MetricCard key={metric.label} {...metric} />
+        ))}
+      </div>
+      <div className="grid items-start gap-5 lg:grid-cols-12">
+        <div className="lg:col-span-7">
           {snapshot.featured ? (
             <FeaturedRole role={snapshot.featured} />
           ) : (
-            <Panel className="p-8 sm:p-10">
+            <Glass className="p-8 sm:p-10">
               <EmptyState
                 title="No role is open yet"
                 detail="Generate a draft, then lock the checklist when it is ready to receive applicants."
                 actionHref="/jobs"
                 actionLabel="Create a role"
               />
-            </Panel>
+            </Glass>
           )}
         </div>
-        <div className="lg:col-span-4">
+        <div className="space-y-4 lg:col-span-5">
+          {snapshot.interviews.length > 0 ? <InterviewList interviews={snapshot.interviews} /> : null}
           <ReviewList people={snapshot.review} />
         </div>
       </div>
-      <Counts counts={snapshot.counts} />
       <RoleList roles={snapshot.roles} />
     </div>
   );
 }
 
+function DeskPulse({ snapshot }: { snapshot: DeskSnapshot }) {
+  const next = snapshot.interviews[0];
+  const waiting = snapshot.counts.review;
+  return (
+    <Link
+      href={next?.href ?? "/candidates"}
+      className="max-w-xs text-right"
+    >
+      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-peach">{next ? "Next interview" : "Attention"}</p>
+      <p className="mt-1 font-semibold text-ivory">{next ? next.name : waiting === 0 ? "No one is waiting" : `${waiting} waiting`}</p>
+      <p className="text-sm text-mist">{next ? next.when : "Open the review queue"}</p>
+    </Link>
+  );
+}
+
+function MetricCard({
+  label,
+  value,
+  detail,
+  href,
+  icon,
+}: {
+  label: string;
+  value: number;
+  detail: string;
+  href: string;
+  icon: ReactNode;
+}) {
+  return (
+    <Glass elevation="secondary">
+      <Link href={href} className="flex h-full min-h-[9.5rem] flex-col justify-between p-4 hover:bg-ivory/[0.03] sm:min-h-[10.75rem] sm:p-5">
+        <span className="flex items-center justify-between">
+          <span className="flex h-9 w-9 items-center justify-center rounded-control border border-amber/25 bg-amber/10 text-amber">
+            {icon}
+          </span>
+          <span aria-hidden className="text-mist">
+            →
+          </span>
+        </span>
+        <span className="mt-4 block">
+          <span className="block font-display text-4xl font-medium leading-none tracking-[-0.03em] text-ivory tabular-nums">{value}</span>
+          <span className="mt-2 block text-xs font-semibold uppercase tracking-[0.14em] text-mist">{label}</span>
+          <span className="mt-1 block text-sm text-mist">{detail}</span>
+        </span>
+      </Link>
+    </Glass>
+  );
+}
+
 function FeaturedRole({ role }: { role: DeskRole }) {
   return (
-    <Panel glow elevated>
-      <div className="space-y-8 p-8 sm:p-10">
-        <div className="space-y-4">
-          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-mist">Featured role</p>
-          <h2 className="max-w-xl font-display text-4xl font-medium leading-[1.08] tracking-[-0.03em] text-ivory sm:text-5xl">
-            {role.title}
-          </h2>
-          <p className="max-w-xl text-base leading-7 text-mist">{role.summary}</p>
+    <Glass>
+      <div className="flex flex-col sm:flex-row">
+        <div className="flex-1 space-y-6 p-7 sm:p-8">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-mist">Featured role</p>
+            <StatusPill label={roleLabel(role)} tone={role.tone} />
+          </div>
+          <div className="space-y-3">
+            <h2 className="max-w-xl font-display text-4xl font-medium leading-[1.08] tracking-[-0.03em] text-ivory">
+              {role.title}
+            </h2>
+            <p className="max-w-xl text-sm leading-6 text-mist">{role.summary}</p>
+          </div>
+          <p className="text-sm text-mist">{role.meta}</p>
+          <div className="flex flex-wrap gap-3">
+            <ButtonLink href={role.href}>Open role</ButtonLink>
+            <ButtonLink href="/candidates" variant="secondary">
+              Review applicants
+            </ButtonLink>
+          </div>
         </div>
-        <div className="flex flex-wrap items-center gap-3 text-sm text-mist">
-          <StatusPill label={role.status} tone={role.tone} />
-          <span>{role.meta}</span>
-        </div>
-        <div className="flex flex-wrap gap-3">
-          <ButtonLink href={role.href}>Open role</ButtonLink>
-          <ButtonLink href="/candidates" variant="secondary">
-            Review applicants
-          </ButtonLink>
+        <div
+          aria-hidden
+          className="relative min-h-36 overflow-hidden sm:w-52 lg:w-60"
+        >
+          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_70%_42%,rgb(244_184_128/0.95),rgb(196_69_45/0.72)_36%,rgb(62_16_22/0.96)_74%)]" />
+          <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-night/70 to-transparent" />
+          <div className="absolute left-[18%] top-[38%] h-16 w-40 rounded-full bg-amber/40 blur-2xl" />
         </div>
       </div>
-    </Panel>
+    </Glass>
   );
 }
 
 function ReviewList({ people }: { people: DeskCandidate[] }) {
   return (
-    <Panel wash>
-      <div className="space-y-5 p-6 sm:p-7">
-        <div className="space-y-1">
-          <h2 className="font-display text-2xl font-medium tracking-[-0.02em] text-ivory">Waiting on you</h2>
-          <p className="text-sm leading-6 text-mist">People who are not invited yet, or whose CV is still unread.</p>
+    <Glass elevation="secondary" className="h-full">
+      <div className="space-y-4 p-6 sm:p-7">
+        <div className="flex items-start justify-between gap-3">
+          <div className="space-y-1">
+            <h2 className="font-display text-2xl font-medium tracking-[-0.02em] text-ivory">Needs your attention</h2>
+            <p className="text-sm leading-6 text-mist">Not invited yet, or a CV still unread.</p>
+          </div>
+          <Link href="/candidates" className="shrink-0 text-sm font-semibold text-amber hover:text-peach">
+            View all
+          </Link>
         </div>
         {people.length === 0 ? <p className="text-sm text-mist">No one is waiting.</p> : null}
-        <ul className="space-y-2">
+        <ul className="space-y-1">
           {people.map((person) => (
             <li key={person.id}>
-              <Link href={person.href} className="block rounded-control px-3 py-3 hover:bg-raised">
+              <Link href={person.href} className="block rounded-control px-3 py-3 hover:bg-ivory/[0.04]">
                 <span className="flex items-start justify-between gap-3">
                   <span className="block font-semibold text-ivory">{person.name}</span>
                   <StatusPill label={person.label} tone={person.tone} />
@@ -161,55 +318,125 @@ function ReviewList({ people }: { people: DeskCandidate[] }) {
           ))}
         </ul>
       </div>
-    </Panel>
+    </Glass>
   );
 }
 
-function Counts({ counts }: { counts: DeskSnapshot["counts"] }) {
-  const items = [
-    { label: "Roles", value: counts.roles },
-    { label: "Locked profiles", value: counts.locked },
-    { label: "Waiting", value: counts.waiting },
-  ];
+function InterviewList({ interviews }: { interviews: DeskInterview[] }) {
   return (
-    <Panel>
-      <dl className="grid sm:grid-cols-3">
-        {items.map((item, index) => (
-          <div key={item.label} className={`px-6 py-6 ${index > 0 ? "sm:border-l sm:border-line" : ""}`}>
-            <dt className="text-xs font-semibold uppercase tracking-[0.18em] text-mist">{item.label}</dt>
-            <dd className="mt-2 font-display text-4xl font-medium tracking-[-0.03em] text-ivory">{item.value}</dd>
-          </div>
-        ))}
-      </dl>
-    </Panel>
-  );
-}
-
-function RoleList({ roles }: { roles: DeskRole[] }) {
-  return (
-    <Panel>
+    <Glass elevation="secondary" className="h-full">
       <div className="space-y-4 p-6 sm:p-7">
-        <h2 className="font-display text-2xl font-medium tracking-[-0.02em] text-ivory">Other roles</h2>
-        {roles.length === 0 ? <p className="text-sm text-mist">The featured role is the only one on file.</p> : null}
-        <ul className="divide-y divide-line">
-          {roles.slice(0, 4).map((role) => (
-            <li key={role.id}>
-              <Link href={role.href} className="flex flex-wrap items-center justify-between gap-3 py-4 hover:text-amber">
+        <div className="flex items-start justify-between gap-3">
+          <h2 className="font-display text-2xl font-medium tracking-[-0.02em] text-ivory">Upcoming interviews</h2>
+          <Link href="/candidates" className="shrink-0 text-sm font-semibold text-amber hover:text-peach">
+            View all
+          </Link>
+        </div>
+        <ul className="divide-y divide-ivory/10">
+          {interviews.map((interview) => (
+            <li key={interview.id}>
+              <Link href={interview.href} className="flex items-start justify-between gap-3 py-3 hover:text-amber">
                 <span>
-                  <span className="block font-semibold text-ivory">{role.title}</span>
-                  <span className="mt-1 block text-sm text-mist">{role.meta}</span>
+                  <span className="block text-sm font-semibold text-peach">{interview.when}</span>
+                  <span className="mt-1 block font-semibold text-ivory">{interview.name}</span>
+                  <span className="mt-1 block text-sm text-mist">{interview.role}</span>
                 </span>
-                <StatusPill label={role.status} tone={role.tone} />
+                <span aria-hidden className="pt-1 text-mist">
+                  →
+                </span>
               </Link>
             </li>
           ))}
         </ul>
-        {roles.length > 4 ? (
-          <ButtonLink href="/jobs" variant="secondary">
-            All roles
-          </ButtonLink>
-        ) : null}
       </div>
-    </Panel>
+    </Glass>
+  );
+}
+
+function RoleList({ roles }: { roles: DeskRole[] }) {
+  const visible = roles.slice(0, 6);
+  return (
+    <Glass elevation="secondary">
+      <div className="space-y-4 p-6 sm:p-7">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="font-display text-2xl font-medium tracking-[-0.02em] text-ivory">Your jobs</h2>
+          <Link href="/jobs" className="text-sm font-semibold text-amber hover:text-peach">
+            View all jobs
+          </Link>
+        </div>
+        {roles.length === 0 ? <p className="text-sm text-mist">No roles are on file.</p> : null}
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[32rem] text-left text-sm">
+            <thead>
+              <tr className="text-xs font-semibold uppercase tracking-[0.16em] text-mist">
+                <th className="pb-3 pr-4 font-semibold">Role</th>
+                <th className="pb-3 pr-4 font-semibold">Status</th>
+                <th className="pb-3 pr-4 font-semibold">Applicants</th>
+                <th className="pb-3 font-semibold">Next action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-ivory/10">
+              {visible.map((role) => (
+                <tr key={role.id}>
+                  <td className="py-3 pr-4">
+                    <Link href={role.href} className="font-semibold text-ivory hover:text-amber">
+                      {role.title}
+                    </Link>
+                    <span className="mt-1 block text-mist">v{role.versionNumber}</span>
+                  </td>
+                  <td className="py-3 pr-4">
+                    <StatusPill label={roleLabel(role)} tone={role.tone} />
+                  </td>
+                  <td className="py-3 pr-4 tabular-nums text-ivory">{role.applicants}</td>
+                  <td className="py-3">
+                    <Link href={role.href} className="font-semibold text-amber hover:text-peach">
+                      {nextAction(role)}
+                    </Link>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </Glass>
+  );
+}
+
+function BriefcaseIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path d="M8 7V6a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v1" stroke="currentColor" strokeWidth="1.6" />
+      <rect x="3.5" y="7" width="17" height="13" rx="2" stroke="currentColor" strokeWidth="1.6" />
+    </svg>
+  );
+}
+
+function PeopleIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <circle cx="9" cy="9" r="3" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M4 18.5c.6-2.4 2.5-3.5 5-3.5s4.4 1.1 5 3.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      <circle cx="16.5" cy="9.5" r="2.2" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M16 15c1.8.2 3.2 1.1 3.8 3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function CalendarIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <rect x="3.5" y="5" width="17" height="15" rx="2" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M8 3.5V7M16 3.5V7M3.5 10h17" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function ClockIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <circle cx="12" cy="12" r="8" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M12 8v4.5l3 2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
   );
 }

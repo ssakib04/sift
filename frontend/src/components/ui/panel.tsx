@@ -13,13 +13,12 @@ export function Panel({
   wash?: boolean;
   elevated?: boolean;
 }) {
+  const face = elevated || glow
+    ? "border-white/15 bg-[linear-gradient(180deg,rgb(92_42_34/0.46),rgb(36_16_14/0.58))] shadow-[inset_0_1px_0_rgb(255_228_206/0.45),inset_0_0_24px_rgb(240_160_75/0.06),0_18px_40px_rgb(6_2_2/0.22)]"
+    : "border-white/10 bg-[linear-gradient(180deg,rgb(72_32_26/0.5),rgb(28_12_12/0.62))] shadow-[inset_0_1px_0_rgb(255_220_196/0.28),0_12px_28px_rgb(6_2_2/0.2)]";
   return (
-    <section
-      className={`relative overflow-hidden rounded-card border border-ivory/10 bg-night/65 backdrop-blur-2xl ${
-        elevated ? "shadow-lift" : "shadow-[0_18px_50px_rgb(16_9_8/0.35)]"
-      } ${className}`}
-    >
-      <span aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-ivory/30 to-transparent" />
+    <section className={`relative overflow-hidden rounded-card border backdrop-blur-xl ${face} ${className}`}>
+      <span aria-hidden className="pointer-events-none absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-peach/70 to-transparent" />
       {glow ? (
         <>
           <span aria-hidden className="pointer-events-none absolute -right-8 -top-20 h-80 w-80 rounded-full bg-ember/40 blur-3xl" />

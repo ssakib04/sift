@@ -13,7 +13,7 @@ def test_unscored_candidate_is_listed_without_a_rank() -> None:
         full_name="Ada Lovelace",
         content_sha256="abc",
         source_message_id="msg-1",
-        created_at=datetime.now(UTC),
+        created_at=datetime(2026, 10, 21, 8, 30, tzinfo=UTC),
     )
     candidate.parse_result = None
     candidate.snapshot = None
@@ -25,3 +25,4 @@ def test_unscored_candidate_is_listed_without_a_rank() -> None:
     assert listed.invited is False
     assert listed.email == "ada@example.com"
     assert listed.evaluations == []
+    assert listed.created_at == datetime(2026, 10, 21, 8, 30, tzinfo=UTC)

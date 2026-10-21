@@ -546,6 +546,7 @@ def _to_candidate_read(
         evaluations=evaluations,
         job_id=job_id,
         job_title=job_title,
+        created_at=candidate.created_at,
         scheduled_label=_scheduled_label(
             interview.scheduled_start if interview is not None else None,
             interview.scheduled_end if interview is not None else None,

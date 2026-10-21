@@ -11,7 +11,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <ApplicantNotices />
       <div className="mx-auto flex min-h-screen max-w-[1440px] flex-col lg:flex-row">
         <RecruiterNav />
-        <main className="min-w-0 flex-1 px-6 pb-28 pt-4 lg:px-12 lg:pb-16 lg:pt-12">{children}</main>
+        <main className="min-w-0 flex-1 px-5 pb-28 pt-4 lg:pb-16 lg:pl-6 lg:pr-8 lg:pt-8">{children}</main>
       </div>
     </div>
   );
