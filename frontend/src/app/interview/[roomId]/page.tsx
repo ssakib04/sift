@@ -100,7 +100,7 @@ export default function InterviewPage() {
   }, [roomId, token]);
 
   useEffect(() => {
-    if (role !== "recruiter" || !token || closed || detail?.status === "ended") {
+    if (role !== "recruiter" || !token || closed || detail?.status === "ended" || detail?.conductor === "agent") {
       return;
     }
     let stop = false;
@@ -124,7 +124,13 @@ export default function InterviewPage() {
       stop = true;
       window.clearInterval(timer);
     };
-  }, [closed, detail?.status, role, roomId, token]);
+  }, [closed, detail?.conductor, detail?.status, role, roomId, token]);
+
+  useEffect(() => {
+    if (detail?.conductor === "agent") {
+      setRail((current) => (current === "transcript" ? "questions" : current));
+    }
+  }, [detail?.conductor]);
 
   useEffect(() => {
     if (role !== "recruiter" || !token || closed || detail?.status === "ended") {
@@ -405,7 +411,7 @@ export default function InterviewPage() {
               captureFrames={role === "candidate" && Boolean(detail?.biometric_consented_at) && !faceDone}
               onFrame={sendFrame}
               onConnection={onConnection}
-              onTranscript={role === "recruiter" ? hearTranscript : undefined}
+              onTranscript={role === "recruiter" && detail?.conductor !== "agent" ? hearTranscript : undefined}
               onHangup={hangUp}
               onQuiz={role === "candidate" ? () => setQuizOpen(true) : undefined}
             />
@@ -434,13 +440,15 @@ export default function InterviewPage() {
         {role === "recruiter" && !ended ? (
           <aside className="hidden w-[22rem] shrink-0 flex-col border-l border-ivory/10 bg-night/40 backdrop-blur-xl md:flex xl:w-[26rem]">
             <div className="flex shrink-0 border-b border-ivory/10">
-              <button
-                type="button"
-                className={`flex-1 px-3 py-3 text-sm ${rail === "transcript" ? "text-ivory" : "text-mist"}`}
-                onClick={() => setRail("transcript")}
-              >
-                Transcript
-              </button>
+              {detail?.conductor === "agent" ? null : (
+                <button
+                  type="button"
+                  className={`flex-1 px-3 py-3 text-sm ${rail === "transcript" ? "text-ivory" : "text-mist"}`}
+                  onClick={() => setRail("transcript")}
+                >
+                  Transcript
+                </button>
+              )}
               <button
                 type="button"
                 className={`flex-1 px-3 py-3 text-sm ${rail === "questions" ? "text-ivory" : "text-mist"}`}
@@ -457,7 +465,7 @@ export default function InterviewPage() {
               </button>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto p-4">
-              {rail === "transcript" ? (
+              {rail === "transcript" && detail?.conductor !== "agent" ? (
                 <LiveTranscript turns={turns} candidateName={identification?.invited_name || ""} />
               ) : null}
               {rail === "identity" ? <IdentityPanel identification={identification} /> : null}
