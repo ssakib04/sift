@@ -416,7 +416,7 @@ export default function InterviewPage() {
           ) : null}
         </section>
         {role === "recruiter" && !ended ? (
-          <aside className="hidden w-[22rem] shrink-0 flex-col border-l border-ivory/10 bg-night/40 backdrop-blur-xl md:flex xl:w-[26rem]">
+          <aside className="hidden w-[22rem] shrink-0 flex-col border-l border-white/10 bg-[linear-gradient(180deg,rgb(72_32_26/0.5),rgb(28_12_12/0.62))] backdrop-blur-xl md:flex xl:w-[26rem]">
             <div className="flex shrink-0 border-b border-ivory/10">
               {detail?.conductor === "agent" ? null : (
                 <button
