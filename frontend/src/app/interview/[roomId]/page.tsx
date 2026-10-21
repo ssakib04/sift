@@ -10,11 +10,9 @@ import { LiveTranscript } from "@/components/interview/live-transcript";
 import { McqQuizModal } from "@/components/interview/mcq-quiz-modal";
 import { VideoRoom } from "@/components/interview/video-room";
 import { Atmosphere } from "@/components/ui/atmosphere";
-import { Panel } from "@/components/ui/panel";
 import {
   CopilotAnswer,
   IdentificationAck,
-  InterviewAnalysis,
   Identification,
   InterviewCopilot,
   InterviewDetail,
@@ -35,7 +33,6 @@ export default function InterviewPage() {
   const [copilot, setCopilot] = useState<InterviewCopilot | null>(null);
   const [copilotReply, setCopilotReply] = useState<CopilotAnswer | null>(null);
   const [asking, setAsking] = useState(false);
-  const [analysis, setAnalysis] = useState<InterviewAnalysis | null>(null);
   const [message, setMessage] = useState("");
   const [connection, setConnection] = useState("");
   const [ending, setEnding] = useState(false);
@@ -158,33 +155,6 @@ export default function InterviewPage() {
       window.clearInterval(timer);
     };
   }, [closed, detail?.status, role, roomId, token]);
-
-  useEffect(() => {
-    if (role !== "recruiter" || !token || endError || !(closed || detail?.status === "ended") || analysis) {
-      return;
-    }
-    let stop = false;
-    async function loadAnalysis() {
-      try {
-        const next = await apiRequest<InterviewAnalysis>(`/api/v1/interview-sessions/${roomId}/analysis`, {
-          headers: bearer(token),
-        });
-        if (!stop) {
-          setAnalysis(next);
-        }
-      } catch {
-        return;
-      }
-    }
-    void loadAnalysis();
-    const timer = window.setInterval(() => {
-      void loadAnalysis();
-    }, 3000);
-    return () => {
-      stop = true;
-      window.clearInterval(timer);
-    };
-  }, [analysis, closed, detail?.status, endError, role, roomId, token]);
 
   const sendFrame = useCallback(
     async (imageBase64: string) => {
@@ -417,8 +387,16 @@ export default function InterviewPage() {
             />
           ) : null}
           {ended && role === "recruiter" && !endError ? (
-            <div className="h-full overflow-y-auto px-6 py-6">
-              <AnalysisView analysis={analysis} failed={detail?.processing_status === "failed"} ending={ending} />
+            <div className="grid h-full place-items-center px-6 text-center">
+              <div className="max-w-md space-y-3">
+                <p className="text-ivory">{ending ? "Saving the interview." : "This interview has ended."}</p>
+                <p className="text-sm text-mist">The reports are saved with this candidate. Open one at a time from their page.</p>
+                {!ending && detail?.candidate_id ? (
+                  <Link href={`/candidates/${detail.candidate_id}`} className="text-sm text-ivory underline">
+                    Open reports
+                  </Link>
+                ) : null}
+              </div>
             </div>
           ) : null}
           {left && !ended ? (
@@ -484,98 +462,6 @@ export default function InterviewPage() {
       {quizOpen && role === "candidate" && token ? (
         <McqQuizModal sessionId={roomId} token={token} onClose={() => setQuizOpen(false)} />
       ) : null}
-    </div>
-  );
-}
-
-function AnalysisView({
-  analysis,
-  failed,
-  ending,
-}: {
-  analysis: InterviewAnalysis | null;
-  failed: boolean;
-  ending: boolean;
-}) {
-  if (!analysis) {
-    return (
-      <p className="text-sm text-mist">
-        {failed ? "The analysis could not be prepared." : ending ? "Closing the call." : "Preparing the question and answer analysis."}
-      </p>
-    );
-  }
-  return (
-    <div className="mx-auto max-w-3xl pb-10">
-      <Panel wash>
-        <div className="space-y-6 px-6 py-6">
-      <h1 className="font-display text-3xl font-medium text-ivory">Interview analysis</h1>
-      <p className="text-sm text-mist">{analysis.summary}</p>
-      <ul className="grid gap-2 text-sm sm:grid-cols-2">
-        <li><Panel><div className="px-4 py-3">Relevance {analysis.relevance.toFixed(1)}</div></Panel></li>
-        <li><Panel><div className="px-4 py-3">Technical accuracy {analysis.technical_accuracy.toFixed(1)}</div></Panel></li>
-        <li><Panel><div className="px-4 py-3">Completeness {analysis.completeness.toFixed(1)}</div></Panel></li>
-        <li><Panel><div className="px-4 py-3">Articulation {analysis.articulation.toFixed(1)}</div></Panel></li>
-      </ul>
-      {analysis.gaps.length > 0 ? (
-        <section className="space-y-1">
-          <h2 className="text-sm font-medium text-ivory">Coverage gaps</h2>
-          <ul className="list-disc pl-5 text-sm text-ivory">
-            {analysis.gaps.map((gap) => (
-              <li key={gap}>{gap}</li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
-      {analysis.discrepancies.length > 0 ? (
-        <section className="space-y-1">
-          <h2 className="text-sm font-medium text-ivory">Discrepancies</h2>
-          <ul className="list-disc pl-5 text-sm text-ivory">
-            {analysis.discrepancies.map((item) => (
-              <li key={item}>{item}</li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
-      {analysis.pairs.length > 0 ? (
-        <section className="space-y-2">
-          <h2 className="text-sm font-medium text-ivory">Questions and answers</h2>
-          <ul className="space-y-2">
-            {analysis.pairs.map((pair) => (
-              <li key={pair.pair_id}>
-                <Panel>
-                  <div className="space-y-1 px-4 py-3 text-sm">
-                    <p className="font-medium text-ivory">
-                      {pair.pair_id} · {pair.intent.replaceAll("_", " ")}
-                    </p>
-                    <p className="text-ivory">{pair.question}</p>
-                    <p className="text-mist">{pair.answer || "No answer"}</p>
-                    <p className="text-mist">{pair.citation}</p>
-                    <p className="text-mist">
-                      Relevance {pair.relevance.toFixed(1)} · Technical accuracy {pair.technical_accuracy.toFixed(1)} · Completeness {pair.completeness.toFixed(1)} · Articulation {pair.articulation.toFixed(1)}
-                    </p>
-                    {pair.query_ids.length > 0 ? <p className="text-mist">Checklist {pair.query_ids.join(", ")}</p> : null}
-                  </div>
-                </Panel>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
-      {analysis.justifications.length > 0 ? (
-        <section className="space-y-2">
-          <h2 className="text-sm font-medium text-ivory">Evidence</h2>
-          <ul className="space-y-2 text-sm">
-            {analysis.justifications.map((item) => (
-              <li key={`${item.citation}-${item.claim}`}>
-                <p className="text-ivory">{item.claim}</p>
-                <p className="text-mist">{item.citation}</p>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
-        </div>
-      </Panel>
     </div>
   );
 }
