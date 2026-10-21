@@ -50,6 +50,7 @@ class SessionDetailRead(BaseModel):
     processing_status: str = ""
     biometric_consented_at: datetime | None = None
     conductor: str = ""
+    candidate_id: UUID
 
 
 class ProfileOverviewRead(BaseModel):

@@ -7,16 +7,41 @@ import { useSearchParams } from "next/navigation";
 import { AppShell } from "@/components/ui/app-shell";
 import { PageHeader } from "@/components/ui/page-header";
 import { Panel } from "@/components/ui/panel";
-import { CandidateGroup, JobComparison, apiRequest } from "@/lib/api";
+import { CandidateGroup, InterviewHistoryItem, JobComparison, apiRequest } from "@/lib/api";
 
 function points(value: number | null): string {
   return value === null ? "—" : value.toFixed(1);
+}
+
+function when(value: string | null): string {
+  if (!value) {
+    return "Not ended";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "Not ended";
+  }
+  return date.toLocaleString();
+}
+
+function statusLabel(value: string): string {
+  if (value === "ended") {
+    return "Ended";
+  }
+  if (value === "started") {
+    return "In progress";
+  }
+  if (value === "invited") {
+    return "Invited";
+  }
+  return value.replaceAll("_", " ");
 }
 
 function CandidatesPageContent() {
   const requestedJobId = useSearchParams().get("job");
   const [groups, setGroups] = useState<CandidateGroup[]>([]);
   const [comparisons, setComparisons] = useState<JobComparison[]>([]);
+  const [history, setHistory] = useState<InterviewHistoryItem[]>([]);
   const [message, setMessage] = useState("");
 
   useEffect(() => {
@@ -29,6 +54,11 @@ function CandidatesPageContent() {
       .then(setComparisons)
       .catch((error: unknown) => {
         setMessage(error instanceof Error ? error.message : "Could not load assessments.");
+      });
+    apiRequest<InterviewHistoryItem[]>("/api/v1/interview-history")
+      .then(setHistory)
+      .catch((error: unknown) => {
+        setMessage(error instanceof Error ? error.message : "Could not load interviews.");
       });
   }, []);
 
@@ -45,7 +75,8 @@ function CandidatesPageContent() {
 
   return (
     <AppShell>
-      <div className="mx-auto max-w-6xl space-y-8">
+      <div className="mx-auto grid max-w-6xl gap-8 lg:grid-cols-[minmax(0,1fr)_18rem]">
+        <div className="space-y-8">
         <PageHeader eyebrow="Candidates" title="Assessed applicants" />
         {message ? <p className="text-sm text-mist">{message}</p> : null}
         {groups.length === 0 && !message ? <p className="text-sm text-mist">No candidates yet.</p> : null}
@@ -113,7 +144,7 @@ function CandidatesPageContent() {
                       </Link>
                       <p className="text-sm text-mist">{candidate.email}</p>
                       <p className="text-sm text-mist">
-                        {candidate.aggregate_score !== null ? `Score ${candidate.aggregate_score.toFixed(2)}` : "No score"}
+                        {candidate.aggregate_score !== null ? `CV score ${candidate.aggregate_score.toFixed(2)}` : "No CV score"}
                         {candidate.mcq_score !== null ? ` · Quiz ${candidate.mcq_score}` : ""}
                         {candidate.invited ? " · invited" : ""}
                         {candidate.scheduled_label ? ` · ${candidate.scheduled_label}` : ""}
@@ -127,6 +158,30 @@ function CandidatesPageContent() {
           </section>
           );
         })}
+        </div>
+        <aside className="space-y-3 lg:sticky lg:top-8 lg:self-start">
+          <h2 className="font-display text-2xl font-medium text-ivory">Interviews</h2>
+          {history.length === 0 ? <p className="text-sm text-mist">No interviews yet.</p> : null}
+          <ul className="space-y-2">
+            {history.map((item) => (
+              <li key={item.session_id}>
+                <Panel>
+                  <div className="space-y-1 px-4 py-3">
+                    <Link href={`/candidates/${item.candidate_id}`} className="font-medium text-ivory hover:text-amber">
+                      {item.full_name}
+                    </Link>
+                    <p className="text-sm text-mist">{item.job_title}</p>
+                    <p className="text-sm text-mist">
+                      {item.conductor} · {statusLabel(item.status)}
+                      {item.interview_score !== null ? ` · Interview ${item.interview_score.toFixed(1)}` : ""}
+                    </p>
+                    <p className="text-sm text-mist">{when(item.ended_at)}</p>
+                  </div>
+                </Panel>
+              </li>
+            ))}
+          </ul>
+        </aside>
       </div>
     </AppShell>
   );

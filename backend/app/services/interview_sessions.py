@@ -22,6 +22,8 @@ from app.models.candidate import (
 )
 from app.models.job import JobChecklistQuery, JobVersion
 from app.services.cv_claims import verify_stored_claims
+from app.services.interview_quality import store_interview_quality
+from app.services.interview_score import store_interview_score
 from app.services.interview_analysis import AnalysisDraft, draft_for_transcript
 from app.services.interview_livekit import dispatch_room_agent, issue_livekit_token, room_has_recruiter
 from app.services.interview_transcript import TranscriptWrite, accepted_speaker, spoken_window, transcript_write
@@ -79,6 +81,7 @@ class SessionDetail:
     processing_status: str
     biometric_consented_at: datetime | None
     conductor: str
+    candidate_id: uuid.UUID
 
 
 async def open_candidate_session(
@@ -140,6 +143,7 @@ async def session_detail(db: AsyncSession, settings: Settings, claims: SessionCl
         processing_status=row.processing_status or "",
         biometric_consented_at=row.biometric_consented_at,
         conductor=row.conductor or "",
+        candidate_id=row.candidate_id,
     )
 
 
@@ -546,6 +550,14 @@ async def _analyze_after_end(session_id: uuid.UUID, llm: FallbackLLMManager) -> 
             await verify_stored_claims(db, llm, row, segments)
         except Exception:
             logger.warning("claim_verification_failed")
+        try:
+            await store_interview_score(db, llm, row, segments)
+        except Exception:
+            logger.warning("interview_score_failed")
+        try:
+            await store_interview_quality(db, row)
+        except Exception:
+            logger.warning("interview_quality_failed")
         await db.commit()
 
 

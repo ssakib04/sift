@@ -7,6 +7,7 @@ from app.api.v1.careers import router as careers_router
 from app.api.v1.claims import router as claims_router
 from app.api.v1.copilot import router as copilot_router
 from app.api.v1.health import router as health_router
+from app.api.v1.interview_reports import router as interview_reports_router
 from app.api.v1.interview_sessions import router as interview_sessions_router
 from app.api.v1.invites import router as invites_router
 from app.api.v1.jobs import router as jobs_router
@@ -30,6 +31,7 @@ api_router.include_router(progress_router, tags=["progress"], dependencies=_recr
 api_router.include_router(notices_router, tags=["notifications"], dependencies=_recruiter)
 api_router.include_router(assessments_router, tags=["assessments"], dependencies=_recruiter)
 api_router.include_router(claims_router, tags=["claims"], dependencies=_recruiter)
+api_router.include_router(interview_reports_router, tags=["interview-reports"], dependencies=_recruiter)
 api_router.include_router(invites_router, tags=["invites"])
 api_router.include_router(interview_sessions_router, tags=["interviews"])
 api_router.include_router(quizzes_router, tags=["quizzes"])

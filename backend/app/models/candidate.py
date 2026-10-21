@@ -241,6 +241,16 @@ class InterviewSession(Base):
         cascade="all, delete-orphan",
         uselist=False,
     )
+    performance: Mapped["InterviewPerformance | None"] = relationship(
+        back_populates="session",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+    quality: Mapped["InterviewQuality | None"] = relationship(
+        back_populates="session",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
 
 
 class TranscriptSegment(Base):
@@ -317,6 +327,109 @@ class QAPair(Base):
     notes: Mapped[dict[str, str]] = mapped_column(JSON)
 
     analysis: Mapped[InterviewAnalysis] = relationship(back_populates="pairs")
+
+
+class InterviewPerformance(Base):
+    __tablename__ = "interview_performances"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("interview_sessions.id", ondelete="CASCADE"),
+        unique=True,
+    )
+    overall_score: Mapped[float] = mapped_column(Float)
+    summary: Mapped[str] = mapped_column(Text)
+    llm_tier: Mapped[str] = mapped_column(String(32))
+    fallback_used: Mapped[bool]
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    session: Mapped[InterviewSession] = relationship(back_populates="performance")
+    dimensions: Mapped[list["InterviewPerformanceDimension"]] = relationship(
+        back_populates="performance",
+        cascade="all, delete-orphan",
+    )
+
+
+class InterviewPerformanceDimension(Base):
+    __tablename__ = "interview_performance_dimensions"
+    __table_args__ = (UniqueConstraint("performance_id", "dimension_key", name="uq_performance_dimension"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    performance_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("interview_performances.id", ondelete="CASCADE"),
+        index=True,
+    )
+    dimension_key: Mapped[str] = mapped_column(String(32))
+    label: Mapped[str] = mapped_column(String(64))
+    score: Mapped[float] = mapped_column(Float)
+    evidence: Mapped[str] = mapped_column(Text)
+    note: Mapped[str] = mapped_column(Text)
+    sequence: Mapped[int] = mapped_column(Integer)
+
+    performance: Mapped[InterviewPerformance] = relationship(back_populates="dimensions")
+
+
+class InterviewQuality(Base):
+    __tablename__ = "interview_qualities"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("interview_sessions.id", ondelete="CASCADE"),
+        unique=True,
+    )
+    overall_score: Mapped[float] = mapped_column(Float)
+    summary: Mapped[str] = mapped_column(Text)
+    interviewer_share: Mapped[float] = mapped_column(Float)
+    candidate_share: Mapped[float] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    session: Mapped[InterviewSession] = relationship(back_populates="quality")
+    dimensions: Mapped[list["InterviewQualityDimension"]] = relationship(
+        back_populates="quality",
+        cascade="all, delete-orphan",
+    )
+    recommendations: Mapped[list["InterviewQualityRecommendation"]] = relationship(
+        back_populates="quality",
+        cascade="all, delete-orphan",
+    )
+
+
+class InterviewQualityDimension(Base):
+    __tablename__ = "interview_quality_dimensions"
+    __table_args__ = (UniqueConstraint("quality_id", "dimension_key", name="uq_quality_dimension"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    quality_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("interview_qualities.id", ondelete="CASCADE"),
+        index=True,
+    )
+    dimension_key: Mapped[str] = mapped_column(String(32))
+    label: Mapped[str] = mapped_column(String(64))
+    score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    note: Mapped[str] = mapped_column(Text)
+    sequence: Mapped[int] = mapped_column(Integer)
+
+    quality: Mapped[InterviewQuality] = relationship(back_populates="dimensions")
+
+
+class InterviewQualityRecommendation(Base):
+    __tablename__ = "interview_quality_recommendations"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    quality_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("interview_qualities.id", ondelete="CASCADE"),
+        index=True,
+    )
+    sequence: Mapped[int] = mapped_column(Integer)
+    kind: Mapped[str] = mapped_column(String(32))
+    text: Mapped[str] = mapped_column(Text)
+
+    quality: Mapped[InterviewQuality] = relationship(back_populates="recommendations")
 
 
 class McqAttempt(Base):

@@ -126,6 +126,56 @@ export type ClaimVerification = {
   flags: ClaimFlag[];
 };
 
+export type InterviewScoreDimension = {
+  key: string;
+  label: string;
+  score: number;
+  evidence: string;
+  note: string;
+};
+
+export type InterviewScore = {
+  candidate_id: string;
+  overall_score: number;
+  summary: string;
+  llm_tier: string;
+  fallback_used: boolean;
+  dimensions: InterviewScoreDimension[];
+};
+
+export type InterviewQualityDimension = {
+  key: string;
+  label: string;
+  score: number | null;
+  note: string;
+};
+
+export type InterviewQualityRecommendation = {
+  kind: string;
+  text: string;
+};
+
+export type InterviewQuality = {
+  candidate_id: string;
+  overall_score: number;
+  summary: string;
+  interviewer_share: number;
+  candidate_share: number;
+  dimensions: InterviewQualityDimension[];
+  recommendations: InterviewQualityRecommendation[];
+};
+
+export type InterviewHistoryItem = {
+  session_id: string;
+  candidate_id: string;
+  full_name: string;
+  job_title: string;
+  conductor: string;
+  status: string;
+  ended_at: string | null;
+  interview_score: number | null;
+};
+
 export type MasterAssessment = {
   candidate_id: string;
   full_name: string;
@@ -264,6 +314,7 @@ export type InterviewDetail = {
   processing_status: string;
   biometric_consented_at?: string | null;
   conductor?: string;
+  candidate_id?: string;
 };
 
 export type IdentityProfile = {
