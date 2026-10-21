@@ -73,6 +73,7 @@ export type CandidateRecord = {
   evaluations: CandidateEvaluation[];
   job_id: string | null;
   job_title: string;
+  scheduled_label?: string;
 };
 
 export type CvUploadResult = {
@@ -211,6 +212,23 @@ export type InviteRecord = {
   job_title: string;
   company_name: string;
   status: string;
+  scheduled_label?: string;
+};
+
+export type ApplicantNotice = {
+  id: string;
+  candidate_id: string;
+  full_name: string;
+  job_title: string;
+  rank: number | null;
+  message: string;
+  created_at: string;
+  read: boolean;
+};
+
+export type ApplicantNoticeList = {
+  unread_count: number;
+  notices: ApplicantNotice[];
 };
 
 export type IceServer = {

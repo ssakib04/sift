@@ -116,6 +116,7 @@ function CandidatesPageContent() {
                         {candidate.aggregate_score !== null ? `Score ${candidate.aggregate_score.toFixed(2)}` : "No score"}
                         {candidate.mcq_score !== null ? ` · Quiz ${candidate.mcq_score}` : ""}
                         {candidate.invited ? " · invited" : ""}
+                        {candidate.scheduled_label ? ` · ${candidate.scheduled_label}` : ""}
                         {` · ${candidate.parse_status}`}
                       </p>
                     </div>

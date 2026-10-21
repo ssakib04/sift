@@ -4,13 +4,18 @@ from app.core.config import Settings
 from app.services.invites import SmtpInviteSender, invitation_body
 
 
-def test_invitation_body_contains_the_link_only() -> None:
+def test_invitation_body_congratulates_without_revealing_rank() -> None:
     body = invitation_body(
+        candidate_name="Ada Lovelace",
         job_title="Senior Python Engineer",
         company_name="Sift",
         url="http://localhost:3000/invite/abc",
+        when_label="Wednesday, 22 October 2026, 10:00–10:45 (Asia/Dhaka)",
+        calendar_line="A calendar invitation is attached.",
     )
+    assert "Congratulations, Ada Lovelace." in body
     assert "http://localhost:3000/invite/abc" in body
+    assert "Wednesday, 22 October 2026, 10:00–10:45 (Asia/Dhaka)" in body
     assert "score" not in body.casefold()
     assert "rank" not in body.casefold()
 
@@ -85,3 +90,40 @@ def test_smtp_sender_logs_in_with_the_mailbox_password(monkeypatch) -> None:
     )
     SmtpInviteSender(settings).send("ada@example.com", "Interview invitation: Engineer", "Open your link")
     assert calls == ["ehlo", "starttls", "ehlo", "login", "send"]
+
+
+def test_smtp_sender_attaches_the_calendar_invite(monkeypatch) -> None:
+    sent: list[EmailMessage] = []
+
+    class FakeSMTP:
+        def __init__(self, host: str, port: int, timeout: int) -> None:
+            return None
+
+        def __enter__(self) -> "FakeSMTP":
+            return self
+
+        def __exit__(self, *args: object) -> bool:
+            return False
+
+        def send_message(self, message: EmailMessage) -> None:
+            sent.append(message)
+
+    monkeypatch.setattr("app.services.invites.smtplib.SMTP", FakeSMTP)
+    settings = Settings(
+        _env_file=None,
+        smtp_host="localhost",
+        smtp_port=1025,
+        invite_from_address="jobs@sift.local",
+        imap_username="",
+        imap_password="",
+    )
+    SmtpInviteSender(settings).send(
+        "ada@example.com",
+        "Congratulations — your interview for Engineer",
+        "Congratulations, Ada.",
+        attachment_ics="BEGIN:VCALENDAR\r\nMETHOD:REQUEST\r\nEND:VCALENDAR\r\n",
+    )
+    calendar = list(sent[0].iter_attachments())
+    assert calendar[0].get_content_subtype() == "calendar"
+    assert calendar[0].get_filename() == "interview.ics"
+    assert b"METHOD:REQUEST" in calendar[0].get_payload(decode=True)

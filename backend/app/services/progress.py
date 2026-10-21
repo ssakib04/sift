@@ -5,10 +5,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.config import get_settings
 from app.models.candidate import Candidate
 from app.models.job import Job
 from app.schemas.progress import ProgressBoardRead, ProgressCardRead, ProgressColumnRead, ProgressStage
 from app.services.interview_practice import is_practice_job
+from app.services.schedule import format_schedule, interview_zone
 
 STAGE_ORDER: tuple[ProgressStage, ...] = (
     "received",
@@ -41,6 +43,7 @@ class ApplicantSignals:
     quiz_score: int | None
     assessed: bool
     overall_score: float | None
+    schedule_label: str = ""
 
 
 def progress_stage(signals: ApplicantSignals) -> ProgressStage:
@@ -66,7 +69,7 @@ def card_detail(signals: ApplicantSignals, stage: ProgressStage) -> str:
     if stage == "interview":
         return "Interview ended" if signals.interview_status == "ended" else "Interview started"
     if stage == "invited":
-        return "Invite sent"
+        return signals.schedule_label or "Invite sent"
     if stage == "screened" and signals.rank is not None:
         return f"Rank #{signals.rank}"
     return "CV received"
@@ -119,6 +122,11 @@ def signals_from_candidate(candidate: Candidate) -> ApplicantSignals:
         quiz_score=quiz.score if quiz_submitted else None,
         assessed=assessment is not None,
         overall_score=assessment.overall_score if assessment is not None else None,
+        schedule_label=format_schedule(
+            interview.scheduled_start if interview is not None else None,
+            interview.scheduled_end if interview is not None else None,
+            interview_zone(get_settings().interview_timezone),
+        ),
     )
 
 

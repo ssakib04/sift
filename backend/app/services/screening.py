@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.config import Settings
+from app.core.config import Settings, get_settings
 from app.core.llm_fallback import FallbackLLMManager, LLMFallbackExhaustedError
 from app.graphs.cv_screening_graph import CVGraphError, build_cv_screening_graph
 from app.graphs.job_creation_graph import JobGraphError
@@ -29,12 +29,16 @@ from app.models.candidate import (
 )
 from app.models.job import JobChecklistQuery, JobVersion
 from app.schemas.screening import CandidateGroupRead, CandidateRead, InviteRead, QueryEvaluationRead
+from app.services.calendar import GoogleCalendarClient
 from app.services.cv_claims import store_cv_claims
 from app.services.embeddings import Embedder
 from app.services.face_embed import FaceEmbedder, create_face_embedder
 from app.services.identification import store_candidate_face, store_candidate_profile
-from app.services.invites import InviteSender, invitation_body
+from app.services.interview_booking import remote_busy, reserve_call, taken_windows
+from app.services.invites import InviteSender
+from app.services.notices import record_applicant_notice
 from app.services.ranking import RankInput, invite_ids, rank_candidates
+from app.services.schedule import BusyWindow, format_schedule, interview_zone
 
 logger = logging.getLogger(__name__)
 _EMAIL = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
@@ -180,6 +184,7 @@ async def accept_cv(
         logger.warning("cv_score_failed error_type=%s", type(exc).__name__)
         _store_cv(settings, digest, filename, data, folder="failed")
         session.add(_failed_parse(candidate.id, str(exc)))
+        await record_applicant_notice(session, candidate.id, datetime.now(UTC))
         return "parse_failed"
 
     errors = result.get("errors") or []
@@ -188,6 +193,7 @@ async def accept_cv(
         session.add(
             _failed_parse(candidate.id, "; ".join(errors) or "The CV did not contain extractable text.")
         )
+        await record_applicant_notice(session, candidate.id, datetime.now(UTC))
         return "parse_failed"
 
     attributes = result.get("extracted_attributes") or {}
@@ -255,6 +261,7 @@ async def accept_cv(
         )
     await session.flush()
     await _rerank(session, version.id)
+    await record_applicant_notice(session, candidate.id, datetime.now(UTC))
     await _dispatch_invites(session, settings, sender, version.id)
     return "scored"
 
@@ -271,6 +278,7 @@ async def list_ranked_candidates(session: AsyncSession, job_id: uuid.UUID) -> li
             selectinload(Candidate.snapshot).selectinload(ScoreSnapshot.evaluations),
             selectinload(Candidate.magic_link),
             selectinload(Candidate.quiz_attempt),
+            selectinload(Candidate.interview_session),
             selectinload(Candidate.version).selectinload(JobVersion.queries),
         )
     )
@@ -308,6 +316,7 @@ async def get_candidate(session: AsyncSession, candidate_id: uuid.UUID) -> Candi
             selectinload(Candidate.snapshot).selectinload(ScoreSnapshot.evaluations),
             selectinload(Candidate.magic_link),
             selectinload(Candidate.quiz_attempt),
+            selectinload(Candidate.interview_session),
             selectinload(Candidate.version).selectinload(JobVersion.job),
             selectinload(Candidate.version).selectinload(JobVersion.queries),
         )
@@ -327,18 +336,26 @@ async def resolve_invite(session: AsyncSession, token: str, settings: Settings) 
     statement = (
         select(MagicLink)
         .where(MagicLink.token == token)
-        .options(selectinload(MagicLink.candidate).selectinload(Candidate.version).selectinload(JobVersion.job))
+        .options(
+            selectinload(MagicLink.candidate).selectinload(Candidate.version).selectinload(JobVersion.job),
+            selectinload(MagicLink.candidate).selectinload(Candidate.interview_session),
+        )
     )
     link = await session.scalar(statement)
     if link is None or link.candidate is None or link.candidate.version is None:
         return None
     job = link.candidate.version.job
     title = job.title if job is not None else ""
+    interview = link.candidate.interview_session
     return InviteRead(
         job_title=title,
         company_name=settings.company_name,
         status="invited",
         created_at=link.created_at,
+        scheduled_label=_scheduled_label(
+            interview.scheduled_start if interview is not None else None,
+            interview.scheduled_end if interview is not None else None,
+        ),
     )
 
 
@@ -391,19 +408,32 @@ async def _dispatch_invites(
         if candidate.snapshot is not None and candidate.snapshot.rank is not None
     }
     invited = {candidate.id for candidate in candidates if candidate.magic_link is not None}
+    now = datetime.now(UTC)
+    busy: list[BusyWindow] = await taken_windows(session, now)
+    calendar = GoogleCalendarClient(settings)
+    busy.extend(await asyncio.to_thread(remote_busy, calendar, now))
     for candidate_id in invite_ids(ranks, invited):
         candidate = next(item for item in candidates if item.id == candidate_id)
         if "@" not in candidate.email:
             continue
         token = secrets.token_urlsafe(32)
         url = f"{settings.public_app_url.rstrip('/')}/invite/{token}"
-        await asyncio.to_thread(
-            sender.send,
-            candidate.email,
-            f"Interview invitation: {version.job.title}",
-            invitation_body(job_title=version.job.title, company_name=settings.company_name, url=url),
+        reserved = await asyncio.to_thread(
+            reserve_call,
+            settings,
+            sender,
+            candidate_name=candidate.full_name,
+            candidate_email=candidate.email,
+            job_title=version.job.title,
+            url=url,
+            busy=list(busy),
+            now=now,
+            candidate_id=candidate.id,
+            calendar=calendar,
         )
-        now = datetime.now(UTC)
+        if reserved is None:
+            continue
+        busy.append(BusyWindow(start=reserved.start, end=reserved.end))
         session.add(MagicLink(id=uuid.uuid4(), candidate_id=candidate.id, token=token, created_at=now))
         session.add(
             InterviewSession(
@@ -417,6 +447,10 @@ async def _dispatch_invites(
                 copilot_gaps=[],
                 copilot_question="",
                 copilot_turn_count=-1,
+                scheduled_start=reserved.start,
+                scheduled_end=reserved.end,
+                calendar_event_id=reserved.event_id,
+                calendar_url=reserved.calendar_url,
             )
         )
         await session.flush()
@@ -491,6 +525,7 @@ def _to_candidate_read(
             )
             for item in sorted(snapshot.evaluations, key=lambda item: int(item.query_id[1:]))
         ]
+    interview = candidate.interview_session
     return CandidateRead(
         id=candidate.id,
         email=candidate.email,
@@ -511,4 +546,12 @@ def _to_candidate_read(
         evaluations=evaluations,
         job_id=job_id,
         job_title=job_title,
+        scheduled_label=_scheduled_label(
+            interview.scheduled_start if interview is not None else None,
+            interview.scheduled_end if interview is not None else None,
+        ),
     )
+
+
+def _scheduled_label(start: datetime | None, end: datetime | None) -> str:
+    return format_schedule(start, end, interview_zone(get_settings().interview_timezone))

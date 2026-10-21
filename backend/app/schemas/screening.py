@@ -29,6 +29,7 @@ class CandidateRead(BaseModel):
     evaluations: list[QueryEvaluationRead]
     job_id: UUID | None = None
     job_title: str = ""
+    scheduled_label: str = ""
 
 
 class CandidateGroupRead(BaseModel):
@@ -61,3 +62,4 @@ class InviteRead(BaseModel):
     company_name: str
     status: str
     created_at: datetime
+    scheduled_label: str = ""

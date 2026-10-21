@@ -61,6 +61,13 @@ def test_board_keeps_one_column_per_stage_and_sorts_by_rank() -> None:
     assert screened.cards[0].detail == "Rank #1"
     received = next(column for column in board.columns if column.stage == "received")
     assert received.cards[0].detail == "CV received"
+    invited = board_from_signals(
+        job_id,
+        "Senior Python Engineer",
+        [_signals(full_name="Ada Lovelace", invited=True, schedule_label="Wed 22 Oct, 10:00–10:45 (Asia/Dhaka)")],
+    )
+    invited_column = next(column for column in invited.columns if column.stage == "invited")
+    assert invited_column.cards[0].detail == "Wed 22 Oct, 10:00–10:45 (Asia/Dhaka)"
     assert all(column.cards == [] for column in board.columns if column.stage not in {"screened", "received"})
 
 

@@ -10,6 +10,7 @@ from app.api.v1.health import router as health_router
 from app.api.v1.interview_sessions import router as interview_sessions_router
 from app.api.v1.invites import router as invites_router
 from app.api.v1.jobs import router as jobs_router
+from app.api.v1.notices import router as notices_router
 from app.api.v1.policies import router as policies_router
 from app.api.v1.progress import router as progress_router
 from app.api.v1.quizzes import router as quizzes_router
@@ -26,6 +27,7 @@ api_router.include_router(careers_router, tags=["careers"], dependencies=_recrui
 api_router.include_router(copilot_router, tags=["copilot"], dependencies=_recruiter)
 api_router.include_router(screening_router, tags=["screening"], dependencies=_recruiter)
 api_router.include_router(progress_router, tags=["progress"], dependencies=_recruiter)
+api_router.include_router(notices_router, tags=["notifications"], dependencies=_recruiter)
 api_router.include_router(assessments_router, tags=["assessments"], dependencies=_recruiter)
 api_router.include_router(claims_router, tags=["claims"], dependencies=_recruiter)
 api_router.include_router(invites_router, tags=["invites"])

@@ -33,7 +33,7 @@ export function RecruiterNav() {
 
   return (
     <header className="flex flex-col gap-6 px-6 pt-6 lg:sticky lg:top-0 lg:h-screen lg:w-60 lg:justify-between lg:px-6 lg:py-10">
-      <div className="flex items-center justify-between gap-4 lg:block">
+      <div className="flex items-center justify-between gap-4 max-lg:pr-14 lg:block">
         <Link href="/" className="font-display text-3xl font-medium tracking-[-0.03em] text-ivory">
           Sift
         </Link>

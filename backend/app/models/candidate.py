@@ -162,6 +162,23 @@ class QueryEvaluation(Base):
     snapshot: Mapped[ScoreSnapshot] = relationship(back_populates="evaluations")
 
 
+class ApplicantNotification(Base):
+    """One recruiter alert for an applicant who has just entered the system."""
+
+    __tablename__ = "applicant_notifications"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    candidate_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("candidates.id", ondelete="CASCADE"),
+        unique=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    candidate: Mapped[Candidate] = relationship()
+
+
 class MagicLink(Base):
     __tablename__ = "magic_links"
 
@@ -199,6 +216,10 @@ class InterviewSession(Base):
     copilot_turn_count: Mapped[int] = mapped_column(Integer, default=-1, server_default="-1")
     biometric_consented_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     conductor: Mapped[str] = mapped_column(String(16), default="", server_default="")
+    scheduled_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    scheduled_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    calendar_event_id: Mapped[str] = mapped_column(String(255), default="", server_default="")
+    calendar_url: Mapped[str] = mapped_column(Text, default="", server_default="")
 
     candidate: Mapped[Candidate] = relationship(back_populates="interview_session")
     face_check: Mapped["FaceCheck | None"] = relationship(

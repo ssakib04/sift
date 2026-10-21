@@ -76,6 +76,17 @@ class Settings(BaseSettings):
     piper_voice: str = "en_US-lessac-medium"
     recruiter_password: str = ""
     api_docs_enabled: bool = False
+    interview_duration_minutes: int = 45
+    interview_day_start_hour: int = 10
+    interview_day_end_hour: int = 17
+    interview_lead_minutes: int = 120
+    interview_timezone: str = "Asia/Dhaka"
+    interview_weekdays: str = "0,1,2,3,4"
+    recruiter_calendar_email: str = ""
+    google_calendar_client_id: str = ""
+    google_calendar_client_secret: str = ""
+    google_calendar_refresh_token: str = ""
+    google_calendar_id: str = "primary"
 
     @field_validator("imap_password", "smtp_password")
     @classmethod

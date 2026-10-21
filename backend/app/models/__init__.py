@@ -2,6 +2,7 @@
 
 from app.models.base import Base
 from app.models.candidate import (
+    ApplicantNotification,
     AssessmentComponentScore,
     AssessmentStrength,
     AssessmentWeakness,
@@ -30,6 +31,7 @@ from app.models.job import Job, JobChecklistQuery, JobPosting, JobVersion
 from app.models.policy import PolicyChunk, PolicyDocument
 
 __all__ = [
+    "ApplicantNotification",
     "AssessmentComponentScore",
     "AssessmentStrength",
     "AssessmentWeakness",
