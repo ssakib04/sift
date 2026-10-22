@@ -3,7 +3,7 @@ import json
 import httpx
 import pytest
 
-from app.services.postajob import PostAJobPoster, PublishRequest, build_campaign_body
+from app.services.postajob import PostAJobPoster, PublishRequest, build_campaign_body, mailbox_apply_url
 
 
 def _request() -> PublishRequest:
@@ -19,6 +19,12 @@ def _request() -> PublishRequest:
         skills=["Python", "FastAPI"],
         version_id="version-1",
     )
+
+
+def test_mailbox_apply_url_uses_the_subject() -> None:
+    url = mailbox_apply_url("apply@sift.local", "Quantum Software Engineer")
+    assert url == "mailto:apply@sift.local?subject=Quantum%20Software%20Engineer"
+    assert "/careers/" not in url
 
 
 def test_campaign_body_omits_age_targeting() -> None:

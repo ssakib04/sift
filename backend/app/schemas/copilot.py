@@ -17,8 +17,13 @@ CopilotAction = Literal[
     "pipeline",
     "open_job",
     "open_report",
+    "navigate",
+    "start_practice",
+    "offer_approve",
+    "offer_inbox",
 ]
-CopilotChipKind = Literal["navigate", "prompt", "report"]
+CopilotChipKind = Literal["navigate", "prompt", "report", "confirm"]
+CopilotConfirm = Literal["", "approve", "inbox"]
 CopilotFocus = Literal["stuck", "empty", "summary"]
 
 
@@ -45,6 +50,7 @@ class CopilotPlan(BaseModel):
     candidate_name: str = ""
     other_name: str = ""
     focus: CopilotFocus = "summary"
+    place: str = ""
 
 
 class CopilotNavigation(BaseModel):
@@ -58,6 +64,16 @@ class CopilotChip(BaseModel):
     href: str = ""
     prompt: str = ""
     candidate_id: UUID | None = None
+    confirm: CopilotConfirm = ""
+    job_id: UUID | None = None
+    version_number: int | None = None
+
+
+class CopilotPractice(BaseModel):
+    session_id: UUID
+    token: str
+    role: str
+    guest_url: str
 
 
 class CopilotTurnResponse(BaseModel):
@@ -66,3 +82,4 @@ class CopilotTurnResponse(BaseModel):
     navigation: CopilotNavigation | None = None
     chips: list[CopilotChip] = Field(default_factory=list)
     report_candidate_id: UUID | None = None
+    practice: CopilotPractice | None = None

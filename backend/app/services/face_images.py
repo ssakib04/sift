@@ -1,6 +1,7 @@
-"""Pull candidate photos out of CV files and keep the cropped face beside the record."""
+"""Pull candidate photos out of CV files and keep that photo beside the record."""
 
 import zipfile
+from dataclasses import replace
 from io import BytesIO
 from pathlib import Path
 from uuid import UUID
@@ -31,15 +32,48 @@ def extract_document_images(filename: str, data: bytes) -> list[bytes]:
 
 
 def enroll_from_document(filename: str, data: bytes, embedder: FaceEmbedder) -> FaceSample | None:
-    """Embed the clearest face found in the CV. Documents without a face enroll nothing."""
+    """Embed the clearest face found in the CV. The stored portrait is that CV photo, not a face cut."""
     best: FaceSample | None = None
+    best_source: bytes | None = None
     for image in extract_document_images(filename, data):
         sample = embedder.embed(image)
         if sample is None:
             continue
         if best is None or sample.confidence > best.confidence:
             best = sample
-    return best
+            best_source = image
+    if best is None or best_source is None:
+        return None
+    portrait = encode_portrait(best_source)
+    if portrait is None:
+        return best
+    return replace(best, portrait_jpeg=portrait)
+
+
+def encode_portrait(image: bytes) -> bytes | None:
+    """JPEG of the CV photo at its original size."""
+    from PIL import Image
+
+    try:
+        with Image.open(BytesIO(image)) as source:
+            rgb = source.convert("RGB")
+            encoded = BytesIO()
+            rgb.save(encoded, format="JPEG", quality=92)
+    except Exception:
+        return None
+    return encoded.getvalue()
+
+
+def candidate_photo_file(storage_dir: str, candidate_id: UUID, stored: str) -> Path | None:
+    """Return the enrolled portrait only when it is the face file for this candidate."""
+    root = (Path(storage_dir) / "faces").resolve()
+    path = Path(stored)
+    if not path.is_absolute():
+        path = root / path
+    resolved = path.resolve()
+    if resolved.parent != root or resolved.name != f"{candidate_id}.jpg" or not resolved.is_file():
+        return None
+    return resolved
 
 
 def write_face_crop(storage_dir: str, candidate_id: UUID, jpeg: bytes) -> str:

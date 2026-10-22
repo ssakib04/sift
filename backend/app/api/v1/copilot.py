@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_app_settings, get_embedder, get_llm
@@ -16,19 +16,22 @@ router = APIRouter(prefix="/copilot")
 
 @router.post("/messages", response_model=CopilotTurnResponse)
 async def copilot_message(
-    request: CopilotTurnRequest,
+    body: CopilotTurnRequest,
+    request: Request,
     session: AsyncSession = Depends(get_session),
     llm: FallbackLLMManager = Depends(get_llm),
     embedder: Embedder = Depends(get_embedder),
     settings: Settings = Depends(get_app_settings),
 ) -> CopilotTurnResponse:
+    host = request.headers.get("host", "").split(":")[0].strip()
     try:
         return await run_copilot_turn(
             session,
-            request.messages,
+            body.messages,
             llm=llm,
             retriever=PgPolicyRetriever(session, embedder),
             settings=settings,
+            host=host,
         )
     except JobGraphError as exc:
         raise HTTPException(

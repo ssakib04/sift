@@ -21,12 +21,11 @@ from app.schemas.job import (
     JobRead,
     JobVersionRead,
     JobVersionUpdate,
-    PublicJobRead,
 )
 from app.services.interview_practice import is_practice_job
 from app.services.job_rules import ensure_can_open_version, ensure_editable
 from app.services.mcp_publish import McpPublishError, publish_via_mcp
-from app.services.postajob import JobPoster, PostAJobError, PublishRequest
+from app.services.postajob import JobPoster, PostAJobError, PublishRequest, mailbox_apply_url
 from app.services.telegram import TelegramError
 
 logger = logging.getLogger(__name__)
@@ -110,7 +109,7 @@ async def approve_version(
     ensure_editable(version.status)
     version.status = "locked"
     version.locked_at = datetime.now(UTC)
-    apply_url = f"{settings.public_app_url.rstrip('/')}/careers/{version.id}"
+    apply_url = mailbox_apply_url(settings.apply_to_address, job.mail_subject or job.title)
     version.posting = await _publish(
         version,
         job.title,
@@ -178,29 +177,6 @@ async def list_jobs(session: AsyncSession, settings: Settings) -> list[JobRead]:
 
 async def get_job(session: AsyncSession, job_id: uuid.UUID, settings: Settings) -> JobRead:
     return _to_job_read(await _require_job(session, job_id), settings)
-
-
-async def list_public_jobs(session: AsyncSession, settings: Settings) -> list[PublicJobRead]:
-    statement = (
-        select(JobVersion)
-        .where(JobVersion.status == "locked")
-        .options(selectinload(JobVersion.job))
-        .order_by(JobVersion.locked_at.desc())
-    )
-    versions = list((await session.scalars(statement)).unique().all())
-    return [_to_public(version, settings) for version in versions]
-
-
-async def get_public_job(session: AsyncSession, version_id: uuid.UUID, settings: Settings) -> PublicJobRead | None:
-    statement = (
-        select(JobVersion)
-        .where(JobVersion.id == version_id, JobVersion.status == "locked")
-        .options(selectinload(JobVersion.job))
-    )
-    version = await session.scalar(statement)
-    if version is None:
-        return None
-    return _to_public(version, settings)
 
 
 def _coerce_queries(value: object) -> list[ChecklistQuery]:
@@ -464,23 +440,5 @@ def _to_version_read(version: JobVersion) -> JobVersionRead:
         posting_detail=None if posting is None else posting.detail,
         external_posting_id=None if posting is None else posting.external_id,
         apply_url=None if posting is None else posting.apply_url,
-    )
-
-
-def _to_public(version: JobVersion, settings: Settings) -> PublicJobRead:
-    job = version.job
-    return PublicJobRead(
-        version_id=version.id,
-        job_id=job.id if job is not None else version.job_id,
-        title=job.title if job is not None else "",
-        seniority=version.seniority,
-        description=version.description,
-        contract=version.contract,
-        category=version.category,
-        company_name=settings.company_name,
-        company_country=settings.company_country,
-        minimum_years=version.minimum_years,
-        apply_email=settings.apply_to_address,
-        apply_subject=job.mail_subject if job is not None else "",
     )
 

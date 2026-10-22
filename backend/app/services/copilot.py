@@ -12,11 +12,23 @@ from app.schemas.copilot import (
     CopilotMessage,
     CopilotNavigation,
     CopilotPlan,
+    CopilotPractice,
     CopilotTurnResponse,
+)
+from app.services.copilot_nav import (
+    JOB_PLACES,
+    job_target,
+    normalize_place,
+    person_target,
+    policy_target,
+    progress_target,
+    ranking_target,
+    static_target,
 )
 from app.schemas.job import JOB_CATEGORIES, JobCreateRequest, JobRead
 from app.schemas.progress import ProgressBoardRead
 from app.services.assessment import list_comparisons
+from app.services.interview_practice import open_practice_session
 from app.services.job_service import create_job, list_jobs
 from app.services.policy_ingest import list_policies
 from app.services.progress import list_progress
@@ -25,9 +37,9 @@ from app.services.screening import list_candidate_groups
 PLANNER_SYSTEM = (
     "You are the Sift recruiter copilot. You draft jobs through the policy workflow and "
     "answer questions about jobs, applicants, assessments, and uploaded policies that are already stored. "
-    "Return only a JSON object with keys action, message, job, job_query, candidate_name, other_name, and focus. "
+    "Return only a JSON object with keys action, message, job, job_query, candidate_name, other_name, focus, and place. "
     "action is one of reply, create_job, list_jobs, list_policies, rank_job, open_candidate, "
-    "explain_rank, pipeline, open_job, open_report. "
+    "explain_rank, pipeline, open_job, open_report, navigate, start_practice, offer_approve, offer_inbox. "
     "Use create_job when the recruiter asks to create, draft, hire for, or open a role "
     "and the conversation names a title and at least one required skill. "
     "job uses title, seniority, required_skills, preferred_skills, qualifications, "
@@ -47,7 +59,13 @@ PLANNER_SYSTEM = (
     "Use pipeline for who is stuck or which roles have no applicants. "
     "focus is stuck, empty, or summary. "
     "Use open_job to open a stored job draft. Use open_report for the HTML assessment report. "
-    "Do not approve, lock, or post a job. Do not invent stored records. Do not invent scores."
+    "Use navigate to open a known place. place is one of home, policies, policy, jobs, create, "
+    "job_brief, job_people, candidates, portraits, standing, person, progress, practice. "
+    "job_query names the role or the policy file. candidate_name names the person. "
+    "Use start_practice when the recruiter wants a practice call. "
+    "Use offer_approve when the recruiter wants a draft approved and posted. "
+    "Use offer_inbox when the recruiter wants the apply mailbox checked. "
+    "Never approve, post, or check the inbox yourself. Do not invent stored records. Do not invent scores."
 )
 
 _ACTIONS = {
@@ -61,6 +79,10 @@ _ACTIONS = {
     "pipeline",
     "open_job",
     "open_report",
+    "navigate",
+    "start_practice",
+    "offer_approve",
+    "offer_inbox",
 }
 _SENIORITY: frozenset[str] = frozenset({"Junior", "Mid-Level", "Senior", "Not specified"})
 _CONTRACTS: frozenset[str] = frozenset({"Full Time", "Part Time", "Freelance", "Internship"})
@@ -72,6 +94,7 @@ class NamedJob:
     id: uuid.UUID
     title: str
     status: str
+    version_number: int = 1
 
 
 @dataclass(frozen=True)
@@ -121,6 +144,7 @@ def plan_from_model_text(text: str) -> CopilotPlan:
         candidate_name=_clean_text(payload.get("candidate_name")),
         other_name=_clean_text(payload.get("other_name")),
         focus=focus if isinstance(focus, str) and focus in _FOCUSES else "summary",  # type: ignore[arg-type]
+        place=normalize_place(_clean_text(payload.get("place"))),
     )
 
 
@@ -279,20 +303,21 @@ def rank_from_records(jobs: list[NamedJob], people: list[NamedPerson], query: st
     if not chosen:
         return CopilotTurnResponse(
             message=f"{match.job.title} has no applicants yet.",
-            navigation=CopilotNavigation(href="/progress", label="Open progress"),
-            chips=[_navigate("Open progress", "/progress")],
+            navigation=CopilotNavigation(href=progress_target(), label="Open progress"),
+            chips=[_navigate("Open progress", progress_target())],
         )
     ordered = order_people(chosen)
     top = ordered[0]
     chips = [
-        _navigate("Show ranking", f"/candidates?job={match.job.id}"),
-        _navigate(f"Open {top.full_name}", f"/candidates/{top.id}"),
+        _navigate("Show ranking", ranking_target(match.job.id)),
+        _navigate(f"Open {top.full_name}", person_target(top.id)[0]),
     ]
     if top.assessed:
         chips.append(CopilotChip(label="Open report", kind="report", candidate_id=top.id))
+    href = ranking_target(match.job.id)
     return CopilotTurnResponse(
         message=ranking_message(match.job.title, chosen),
-        navigation=CopilotNavigation(href=f"/candidates?job={match.job.id}", label="Show ranking"),
+        navigation=CopilotNavigation(href=href, label="Show ranking"),
         chips=chips,
     )
 
@@ -331,11 +356,11 @@ def explain_from_records(
         return CopilotTurnResponse(message="Name two different people on the same role.")
     navigation = None
     chips = [
-        _navigate(f"Open {left[0].full_name}", f"/candidates/{left[0].id}"),
-        _navigate(f"Open {right[0].full_name}", f"/candidates/{right[0].id}"),
+        _navigate(f"Open {left[0].full_name}", person_target(left[0].id)[0]),
+        _navigate(f"Open {right[0].full_name}", person_target(right[0].id)[0]),
     ]
     if left[0].job_id == right[0].job_id:
-        href = f"/candidates?job={left[0].job_id}"
+        href = ranking_target(left[0].job_id)
         navigation = CopilotNavigation(href=href, label="Show ranking")
         chips.insert(0, _navigate("Show ranking", href))
     return CopilotTurnResponse(message=explain_pair(left[0], right[0]), navigation=navigation, chips=chips)
@@ -347,7 +372,7 @@ def open_job_from_records(jobs: list[NamedJob], query: str) -> CopilotTurnRespon
     if missed is not None:
         return missed
     assert match.job is not None
-    href = f"/jobs?job={match.job.id}"
+    href = job_target("job_brief", match.job.id)[0]
     status = f", {match.job.status}" if match.job.status else ""
     return CopilotTurnResponse(
         message=f"Opening {match.job.title}{status}.",
@@ -372,9 +397,115 @@ def open_report_from_records(
 def pipeline_from_boards(boards: list[ProgressBoardRead], focus: CopilotFocus) -> CopilotTurnResponse:
     return CopilotTurnResponse(
         message=pipeline_message(boards, focus),
-        navigation=CopilotNavigation(href="/progress", label="Open progress"),
-        chips=[_navigate("Open progress", "/progress")],
+        navigation=CopilotNavigation(href=progress_target(), label="Open progress"),
+        chips=[_navigate("Open progress", progress_target())],
     )
+
+
+def navigate_from_records(
+    jobs: list[NamedJob],
+    people: list[NamedPerson],
+    policies: list[tuple[uuid.UUID, str]],
+    *,
+    place: str,
+    job_query: str,
+    candidate_name: str,
+) -> CopilotTurnResponse:
+    if not place:
+        return CopilotTurnResponse(message="Where should I take you? Home, policies, jobs, candidates, progress, or practice.")
+    static = static_target(place)
+    if static is not None:
+        href, label = static
+        return _open_place(label, href)
+    if place == "policy":
+        return _open_policy(policies, job_query)
+    if place in JOB_PLACES:
+        match = select_jobs(jobs, job_query)
+        missed = _job_choice(place, job_query, match)
+        if missed is not None:
+            return missed
+        assert match.job is not None
+        target = job_target(place, match.job.id)
+        assert target is not None
+        return _open_place(f"{target[1]} for {match.job.title}", target[0])
+    if place == "person":
+        return open_candidate_from_records(jobs, people, name=candidate_name, job_query=job_query)
+    return CopilotTurnResponse(message="Where should I take you? Home, policies, jobs, candidates, progress, or practice.")
+
+
+def offer_approve_from_records(jobs: list[NamedJob], query: str) -> CopilotTurnResponse:
+    match = select_jobs(jobs, query)
+    missed = _job_choice("offer_approve", query, match)
+    if missed is not None:
+        return missed
+    assert match.job is not None
+    job = match.job
+    brief = job_target("job_brief", job.id)
+    assert brief is not None
+    if job.status != "draft":
+        state = job.status or "stored"
+        return CopilotTurnResponse(
+            message=f"{job.title} is already {state}. Open the brief if it needs a new version.",
+            navigation=CopilotNavigation(href=brief[0], label="Open brief"),
+            chips=[_navigate("Open brief", brief[0])],
+        )
+    return CopilotTurnResponse(
+        message=f"Approve and post {job.title}? This locks version {job.version_number} and publishes it.",
+        chips=[
+            CopilotChip(
+                label=f"Approve and post {job.title}",
+                kind="confirm",
+                confirm="approve",
+                job_id=job.id,
+                version_number=job.version_number,
+            )
+        ],
+    )
+
+
+def offer_inbox_turn() -> CopilotTurnResponse:
+    return CopilotTurnResponse(
+        message="Check the apply mailbox? Unread CVs are scored, and anyone who newly enters the top 3 can be invited.",
+        chips=[CopilotChip(label="Check inbox", kind="confirm", confirm="inbox")],
+    )
+
+
+def practice_turn(session_id: uuid.UUID, token: str, role: str, guest_url: str) -> CopilotTurnResponse:
+    return CopilotTurnResponse(
+        message=(
+            f"Practice room ready. Guest link: {guest_url}\n"
+            "Paste that link on another device. You are entering the call as the interviewer."
+        ),
+        navigation=CopilotNavigation(href=f"/interview/{session_id}", label="Enter the call"),
+        practice=CopilotPractice(session_id=session_id, token=token, role=role, guest_url=guest_url),
+    )
+
+
+def _open_place(label: str, href: str) -> CopilotTurnResponse:
+    return CopilotTurnResponse(
+        message=f"Opening {label}.",
+        navigation=CopilotNavigation(href=href, label=label),
+        chips=[_navigate(label, href)],
+    )
+
+
+def _open_policy(policies: list[tuple[uuid.UUID, str]], query: str) -> CopilotTurnResponse:
+    needle = " ".join(query.casefold().split())
+    if len(needle) < 2:
+        return CopilotTurnResponse(message="Which policy should I open?")
+    exact = [item for item in policies if item[1].casefold() == needle]
+    matches = exact or [item for item in policies if needle in item[1].casefold() or item[1].casefold() in needle]
+    if not matches:
+        return CopilotTurnResponse(message=f'No stored policy matches "{query.strip()}".')
+    if len(matches) > 1:
+        lines = ["Which policy do you mean?"]
+        chips: list[CopilotChip] = []
+        for _document_id, filename in matches:
+            lines.append(f"- {filename}")
+            chips.append(CopilotChip(label=filename, kind="prompt", prompt=f"Open the policy {filename}"))
+        return CopilotTurnResponse(message="\n".join(lines), chips=chips)
+    href, label = policy_target(matches[0][0])
+    return _open_place(f"{label} {matches[0][1]}", href)
 
 
 async def run_copilot_turn(
@@ -384,6 +515,7 @@ async def run_copilot_turn(
     llm: FallbackLLMManager,
     retriever: PolicyRetriever,
     settings: Settings,
+    host: str = "",
 ) -> CopilotTurnResponse:
     if not isinstance(llm, FallbackLLMManager):
         raise TypeError("The copilot requires FallbackLLMManager.")
@@ -429,6 +561,26 @@ async def run_copilot_turn(
     if plan.action == "open_report":
         jobs, people = await _records(session, settings)
         return open_report_from_records(jobs, people, name=plan.candidate_name, job_query=job_query_text(plan))
+    if plan.action == "navigate":
+        jobs, people = await _records(session, settings)
+        documents = await list_policies(_require_session(session))
+        policies = [(document.id, document.filename) for document in documents]
+        return navigate_from_records(
+            jobs,
+            people,
+            policies,
+            place=plan.place,
+            job_query=job_query_text(plan),
+            candidate_name=plan.candidate_name,
+        )
+    if plan.action == "offer_approve":
+        jobs, _people = await _records(session, settings)
+        return offer_approve_from_records(jobs, job_query_text(plan))
+    if plan.action == "offer_inbox":
+        return offer_inbox_turn()
+    if plan.action == "start_practice":
+        opened, guest_url = await open_practice_session(_require_session(session), settings, host or "localhost")
+        return practice_turn(opened.session_id, opened.token, opened.role, guest_url)
     if plan.action != "create_job":
         return CopilotTurnResponse(message=plan.message or "Tell me the role you want to draft.")
     prepared = job_request_from_plan(plan)
@@ -497,8 +649,16 @@ def _navigate(label: str, href: str) -> CopilotChip:
 
 
 def _job_prompt(action: str, title: str) -> str:
-    if action == "open_job":
-        return f"Open the job {title}"
+    if action == "open_job" or action == "job_brief":
+        return f"Open the brief for {title}"
+    if action == "job_people":
+        return f"Open the applicants tab for {title}"
+    if action == "portraits":
+        return f"Open the portraits for {title}"
+    if action == "standing":
+        return f"Open the standing for {title}"
+    if action == "offer_approve":
+        return f"Approve and post {title}"
     if action == "open_report":
         return f"Open the report for {title}"
     if action == "explain_rank":
@@ -570,9 +730,9 @@ def _open_person(
     if len(matches) != 1:
         return _people_choice(name, matches, job_title)
     person = matches[0]
-    href = f"/candidates/{person.id}"
+    href = person_target(person.id)[0]
     chips = [
-        _navigate("Show ranking", f"/candidates?job={person.job_id}"),
+        _navigate("Show ranking", ranking_target(person.job_id)),
         _navigate(f"Open {person.full_name}", href),
     ]
     report_id = person.id if report and person.assessed else None
@@ -719,6 +879,7 @@ async def _records(session: AsyncSession | None, settings: Settings) -> tuple[li
             id=job.id,
             title=job.title,
             status=job.versions[-1].status if job.versions else "",
+            version_number=job.versions[-1].version_number if job.versions else 1,
         )
         for job in stored
     ]

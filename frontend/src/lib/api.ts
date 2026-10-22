@@ -70,6 +70,7 @@ export type CandidateRecord = {
   parse_status: string;
   parse_method: string;
   invited: boolean;
+  has_photo: boolean;
   evaluations: CandidateEvaluation[];
   job_id: string | null;
   job_title: string;
@@ -240,15 +241,25 @@ export type ProgressBoard = {
 
 export type CopilotChip = {
   label: string;
-  kind: "navigate" | "prompt" | "report";
+  kind: "navigate" | "prompt" | "report" | "confirm";
   href: string;
   prompt: string;
   candidate_id: string | null;
+  confirm: "" | "approve" | "inbox";
+  job_id: string | null;
+  version_number: number | null;
 };
 
 export type CopilotNavigation = {
   href: string;
   label: string;
+};
+
+export type CopilotPractice = {
+  session_id: string;
+  token: string;
+  role: string;
+  guest_url: string;
 };
 
 export type CopilotTurn = {
@@ -257,6 +268,7 @@ export type CopilotTurn = {
   navigation: CopilotNavigation | null;
   chips: CopilotChip[];
   report_candidate_id: string | null;
+  practice: CopilotPractice | null;
 };
 
 export type InviteRecord = {
@@ -445,21 +457,6 @@ export type PolicyRecord = {
   media_type: string;
   created_at: string;
   chunk_count: number;
-};
-
-export type PublicJob = {
-  version_id: string;
-  title: string;
-  seniority: string;
-  description: string;
-  contract: string;
-  category: string;
-  company_name: string;
-  company_country: string;
-  minimum_years: number;
-  job_id: string;
-  apply_email: string;
-  apply_subject: string;
 };
 
 export class ApiError extends Error {

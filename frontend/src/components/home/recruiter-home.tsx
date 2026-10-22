@@ -92,7 +92,7 @@ export function RecruiterHome() {
   }, []);
 
   return (
-    <div className="relative space-y-4" aria-busy={phase === "loading"}>
+    <div id="home" className="relative space-y-4" aria-busy={phase === "loading"}>
       <header className="flex flex-wrap items-center justify-between gap-6 pr-16">
         <div className="min-w-0">
           <p className="text-xs font-semibold uppercase tracking-[0.22em] text-mist">
@@ -127,8 +127,8 @@ function Glass({
 }) {
   const face =
     elevation === "primary"
-      ? "border-white/15 bg-[linear-gradient(180deg,rgb(92_42_34/0.46),rgb(36_16_14/0.58))] shadow-[inset_0_1px_0_rgb(255_228_206/0.45),inset_0_0_24px_rgb(240_160_75/0.06),0_18px_40px_rgb(6_2_2/0.22)]"
-      : "border-white/10 bg-[linear-gradient(180deg,rgb(72_32_26/0.5),rgb(28_12_12/0.62))] shadow-[inset_0_1px_0_rgb(255_220_196/0.28),0_12px_28px_rgb(6_2_2/0.2)]";
+      ? "border-white/15 bg-[linear-gradient(180deg,rgb(48_24_32/0.34),rgb(18_10_14/0.44))] shadow-[inset_0_1px_0_rgb(255_228_220/0.4),inset_0_0_24px_rgb(212_168_180/0.08),0_18px_40px_rgb(20_10_16/0.16)]"
+      : "border-white/10 bg-[linear-gradient(180deg,rgb(40_20_26/0.36),rgb(16_10_12/0.46))] shadow-[inset_0_1px_0_rgb(255_220_214/0.26),0_12px_28px_rgb(20_10_16/0.14)]";
   return (
     <section className={`relative overflow-hidden rounded-card border backdrop-blur-xl ${face} ${className}`}>
       <span aria-hidden className="pointer-events-none absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-peach/70 to-transparent" />
@@ -280,9 +280,9 @@ function FeaturedRole({ role }: { role: DeskRole }) {
           aria-hidden
           className="relative min-h-36 overflow-hidden sm:w-52 lg:w-60"
         >
-          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_70%_42%,rgb(244_184_128/0.95),rgb(196_69_45/0.72)_36%,rgb(62_16_22/0.96)_74%)]" />
+          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_70%_42%,rgb(212_163_148/0.92),rgb(160_96_96/0.55)_36%,rgb(48_24_28/0.94)_74%)]" />
           <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-night/70 to-transparent" />
-          <div className="absolute left-[18%] top-[38%] h-16 w-40 rounded-full bg-amber/40 blur-2xl" />
+          <div className="absolute left-[18%] top-[38%] h-16 w-40 rounded-full bg-[#d4a394]/45 blur-2xl" />
         </div>
       </div>
     </Glass>

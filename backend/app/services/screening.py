@@ -280,6 +280,7 @@ async def list_ranked_candidates(session: AsyncSession, job_id: uuid.UUID) -> li
             selectinload(Candidate.quiz_attempt),
             selectinload(Candidate.interview_session),
             selectinload(Candidate.version).selectinload(JobVersion.queries),
+            selectinload(Candidate.face),
         )
     )
     candidates = list((await session.scalars(statement)).unique().all())
@@ -319,6 +320,7 @@ async def get_candidate(session: AsyncSession, candidate_id: uuid.UUID) -> Candi
             selectinload(Candidate.interview_session),
             selectinload(Candidate.version).selectinload(JobVersion.job),
             selectinload(Candidate.version).selectinload(JobVersion.queries),
+            selectinload(Candidate.face),
         )
     )
     candidate = await session.scalar(statement)
@@ -541,6 +543,7 @@ def _to_candidate_read(
         parse_status=parse_result.status if parse_result is not None else "pending",
         parse_method=parse_result.parse_method if parse_result is not None else "",
         invited=candidate.magic_link is not None,
+        has_photo=_photo_ready(candidate),
         fairness_flags=list(snapshot.fairness_flags) if snapshot is not None else [],
         justifications=list(snapshot.justifications) if snapshot is not None else [],
         evaluations=evaluations,
@@ -552,6 +555,17 @@ def _to_candidate_read(
             interview.scheduled_end if interview is not None else None,
         ),
     )
+
+
+def _photo_ready(candidate: Candidate) -> bool:
+    from sqlalchemy import inspect as sa_inspect
+
+    if "face" in sa_inspect(candidate).unloaded:
+        return False
+    face = candidate.face
+    if face is None or not face.storage_path:
+        return False
+    return Path(face.storage_path).is_file()
 
 
 def _scheduled_label(start: datetime | None, end: datetime | None) -> str:

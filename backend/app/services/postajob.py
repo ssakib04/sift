@@ -1,9 +1,15 @@
 from typing import Protocol
+from urllib.parse import quote
 
 import httpx
 from pydantic import BaseModel
 
 from app.core.config import Settings
+
+
+def mailbox_apply_url(address: str, subject: str) -> str:
+    topic = quote(subject.strip() or "Application", safe="")
+    return f"mailto:{address.strip()}?subject={topic}"
 
 
 class PublishRequest(BaseModel):

@@ -11,7 +11,6 @@ const LINKS = [
   { href: "/jobs", label: "Jobs" },
   { href: "/candidates", label: "Candidates" },
   { href: "/practice", label: "Practice" },
-  { href: "/careers", label: "Careers" },
 ];
 
 export function SectionLinks() {

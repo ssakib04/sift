@@ -187,18 +187,3 @@ class JobRead(BaseModel):
     apply_email: str
     created_at: datetime
     versions: list[JobVersionRead]
-
-
-class PublicJobRead(BaseModel):
-    version_id: UUID
-    job_id: UUID
-    title: str
-    seniority: str
-    description: str
-    contract: str
-    category: str
-    company_name: str
-    company_country: str
-    minimum_years: int
-    apply_email: str
-    apply_subject: str

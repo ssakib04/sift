@@ -9,8 +9,8 @@ from app.core.llm_fallback import FallbackLLMManager
 from app.models.job import Job
 from app.schemas.job import JobCreateRequest, JobVersionUpdate
 from app.services.job_rules import ChecklistLockedError
-from app.services.job_service import approve_version, create_job, get_public_job, open_next_version, update_draft
-from app.services.postajob import PublishResult
+from app.services.job_service import approve_version, create_job, open_next_version, update_draft
+from app.services.postajob import PublishResult, mailbox_apply_url
 from tests.checklist_factory import sample_queries
 
 
@@ -97,6 +97,8 @@ async def test_approval_freezes_checklist_and_posts_without_exposing_scores() ->
             assert locked.posting_status == "live"
             assert locked.external_posting_id == "camp-1"
             assert poster.requests
+            assert poster.requests[0].apply_url == mailbox_apply_url(settings.apply_to_address, created.mail_subject)
+            assert "/careers/" not in poster.requests[0].apply_url
             assert "age_range" not in poster.requests[0].model_dump()
             with pytest.raises(ChecklistLockedError):
                 await update_draft(
@@ -111,11 +113,6 @@ async def test_approval_freezes_checklist_and_posts_without_exposing_scores() ->
             assert revised.versions[0].status == "locked"
             assert revised.versions[1].status == "draft"
             assert revised.versions[0].queries[0].question == revised.versions[1].queries[0].question
-            public = await get_public_job(session, locked.id, settings)
-            assert public is not None
-            dumped = public.model_dump()
-            assert "queries" not in dumped
-            assert "scoring_rubric" not in dumped
     finally:
         if job_id is not None:
             async with SessionFactory() as session:

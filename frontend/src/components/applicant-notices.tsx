@@ -83,7 +83,7 @@ export function ApplicantNotices() {
         <div
           role="dialog"
           aria-label="New applicants"
-          className="absolute right-0 z-50 mt-2 w-80 max-w-[calc(100vw-2rem)] overflow-hidden rounded-card border border-white/15 bg-[linear-gradient(180deg,rgb(72_32_26/0.72),rgb(28_12_12/0.82))] p-3 shadow-[inset_0_1px_0_rgb(255_220_196/0.28),0_12px_28px_rgb(6_2_2/0.28)] backdrop-blur-xl"
+          className="absolute right-0 z-50 mt-2 w-80 max-w-[calc(100vw-2rem)] overflow-hidden rounded-card border border-white/15 bg-[linear-gradient(180deg,rgb(44_22_28/0.55),rgb(16_10_12/0.66))] p-3 shadow-[inset_0_1px_0_rgb(255_220_214/0.26),0_12px_28px_rgb(20_10_16/0.18)] backdrop-blur-xl"
         >
           <p className="px-1 pb-2 text-xs font-semibold uppercase tracking-[0.16em] text-mist">New applicants</p>
           {notices.length === 0 ? <p className="px-1 py-2 text-sm text-mist">No applicants have registered yet.</p> : null}

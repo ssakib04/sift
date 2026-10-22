@@ -23,7 +23,7 @@ export default function ProgressPage() {
 
   return (
     <AppShell>
-      <div className="mx-auto max-w-6xl space-y-8">
+      <div id="progress" className="mx-auto max-w-6xl space-y-8">
         <PageHeader
           eyebrow="Progress"
           title="Recruitment board"

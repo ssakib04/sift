@@ -19,6 +19,10 @@ from app.services.copilot import (
     explain_from_records,
     explain_pair,
     job_request_from_plan,
+    navigate_from_records,
+    offer_approve_from_records,
+    offer_inbox_turn,
+    practice_turn,
     pipeline_from_boards,
     plan_from_model_text,
     rank_from_records,
@@ -249,7 +253,7 @@ def test_unique_title_ranks_and_opens_the_role() -> None:
     omar = _person("Omar Ali", role, rank=1, aggregate=0.9, overall=71.0, label="Moderate fit", gap="testing", assessed=True)
     result = rank_from_records([role], [omar, priya], "python")
     assert result.navigation is not None
-    assert result.navigation.href == f"/candidates?job={role.id}"
+    assert result.navigation.href == f"/candidates?job={role.id}&view=people#people"
     assert result.message.index("Priya Shah") < result.message.index("Omar Ali")
     assert "82.0" in result.message
     assert result.chips[0].kind == "navigate"
@@ -276,7 +280,7 @@ def test_explain_route_opens_the_shared_role() -> None:
     omar = _person("Omar Ali", role, overall=71.0, label="Moderate fit", gap="testing", assessed=True)
     result = explain_from_records([role], [priya, omar], left_name="Priya", right_name="Omar", job_query=role.title)
     assert result.navigation is not None
-    assert result.navigation.href == f"/candidates?job={role.id}"
+    assert result.navigation.href == f"/candidates?job={role.id}&view=people#people"
 
 
 def test_pipeline_lists_empty_roles_and_stuck_people() -> None:
@@ -306,12 +310,50 @@ def test_pipeline_lists_empty_roles_and_stuck_people() -> None:
     )
     result = pipeline_from_boards([active, empty], "summary")
     assert result.navigation is not None
-    assert result.navigation.href == "/progress"
+    assert result.navigation.href == "/progress#progress"
     assert "Priya Shah on Senior Python Engineer" in result.message
     assert "Support Engineer" in result.message
     empty_only = pipeline_from_boards([active, empty], "empty")
     assert "Priya Shah" not in empty_only.message
     assert "Support Engineer" in empty_only.message
+
+
+def test_navigate_opens_a_named_place_without_inventing_a_role() -> None:
+    home = navigate_from_records([], [], [], place="home", job_query="", candidate_name="")
+    assert home.navigation is not None
+    assert home.navigation.href == "/#home"
+    missed = navigate_from_records([_job("Data Analyst")], [], [], place="job_brief", job_query="Ghost", candidate_name="")
+    assert missed.navigation is None
+    assert "Ghost" in missed.message
+
+
+def test_offer_approve_asks_before_posting_a_draft() -> None:
+    draft = _job("Backend Engineer", status="draft")
+    offered = offer_approve_from_records([draft], "Backend")
+    assert offered.navigation is None
+    assert offered.chips[0].kind == "confirm"
+    assert offered.chips[0].confirm == "approve"
+    assert offered.chips[0].job_id == draft.id
+    assert offered.chips[0].version_number == 1
+    locked = offer_approve_from_records([_job("Backend Engineer", status="locked")], "Backend")
+    assert locked.chips[0].kind == "navigate"
+    assert "already locked" in locked.message
+
+
+def test_inbox_check_is_a_confirmation() -> None:
+    offered = offer_inbox_turn()
+    assert offered.chips[0].confirm == "inbox"
+    assert offered.navigation is None
+    assert "top 3" in offered.message
+
+
+def test_practice_turn_carries_the_guest_link_and_the_room() -> None:
+    session_id = uuid4()
+    result = practice_turn(session_id, "token-1", "recruiter", "http://localhost:3000/invite/abc")
+    assert result.practice is not None
+    assert result.practice.guest_url.endswith("/invite/abc")
+    assert result.navigation is not None
+    assert result.navigation.href == f"/interview/{session_id}"
 
 
 def test_rank_plan_reads_the_job_query() -> None:

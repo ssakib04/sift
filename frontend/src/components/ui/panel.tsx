@@ -14,8 +14,8 @@ export function Panel({
   elevated?: boolean;
 }) {
   const face = elevated || glow
-    ? "border-white/15 bg-[linear-gradient(180deg,rgb(92_42_34/0.46),rgb(36_16_14/0.58))] shadow-[inset_0_1px_0_rgb(255_228_206/0.45),inset_0_0_24px_rgb(240_160_75/0.06),0_18px_40px_rgb(6_2_2/0.22)]"
-    : "border-white/10 bg-[linear-gradient(180deg,rgb(72_32_26/0.5),rgb(28_12_12/0.62))] shadow-[inset_0_1px_0_rgb(255_220_196/0.28),0_12px_28px_rgb(6_2_2/0.2)]";
+    ? "border-white/15 bg-[linear-gradient(180deg,rgb(48_24_32/0.34),rgb(18_10_14/0.44))] shadow-[inset_0_1px_0_rgb(255_228_220/0.4),inset_0_0_24px_rgb(212_168_180/0.08),0_18px_40px_rgb(20_10_16/0.16)]"
+    : "border-white/10 bg-[linear-gradient(180deg,rgb(40_20_26/0.36),rgb(16_10_12/0.46))] shadow-[inset_0_1px_0_rgb(255_220_214/0.26),0_12px_28px_rgb(20_10_16/0.14)]";
   return (
     <section className={`relative overflow-hidden rounded-card border backdrop-blur-xl ${face} ${className}`}>
       <span aria-hidden className="pointer-events-none absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-peach/70 to-transparent" />

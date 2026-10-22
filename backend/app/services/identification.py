@@ -95,7 +95,7 @@ def store_candidate_face(
         return None, "No face photo could be enrolled from the CV."
     if sample is None:
         return None, "No face photo could be enrolled from the CV."
-    path = write_face_crop(storage_dir, candidate_id, sample.crop_jpeg)
+    path = write_face_crop(storage_dir, candidate_id, sample.portrait_jpeg or sample.crop_jpeg)
     face = CandidateFace(
         candidate_id=candidate_id,
         storage_path=path,

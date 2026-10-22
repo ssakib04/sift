@@ -192,7 +192,7 @@ function CandidateProfilePage() {
         </Link>
         {message ? <p className="text-sm text-mist">{message}</p> : null}
         {candidate ? (
-          <article className="space-y-6">
+          <article id="person" className="space-y-6">
             <header className="space-y-3">
               <PageHeader
                 eyebrow={candidate.rank ? `Rank ${candidate.rank}` : "Unranked"}

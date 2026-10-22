@@ -4,8 +4,8 @@ from uuid import uuid4
 
 from PIL import Image
 
-from app.services.face_embed import HashingFaceEmbedder
-from app.services.face_images import enroll_from_document, extract_document_images, write_face_crop
+from app.services.face_embed import FaceSample, HashingFaceEmbedder
+from app.services.face_images import candidate_photo_file, enroll_from_document, extract_document_images, write_face_crop
 
 
 def varied_png(width: int, height: int, *, seed: int = 3) -> bytes:
@@ -74,6 +74,29 @@ def test_enrollment_uses_the_clearest_face_and_writes_the_crop(tmp_path) -> None
     path = write_face_crop(str(tmp_path), candidate_id, sample.crop_jpeg)
     assert path.endswith(f"{candidate_id}.jpg")
     assert (tmp_path / "faces" / f"{candidate_id}.jpg").read_bytes() == sample.crop_jpeg
+
+
+def test_portrait_lookup_stays_inside_the_faces_folder(tmp_path) -> None:
+    candidate_id = uuid4()
+    stored = write_face_crop(str(tmp_path), candidate_id, b"jpeg-bytes")
+    assert candidate_photo_file(str(tmp_path), candidate_id, stored) == (tmp_path / "faces" / f"{candidate_id}.jpg").resolve()
+    outside = tmp_path / "secret.jpg"
+    outside.write_bytes(b"nope")
+    assert candidate_photo_file(str(tmp_path), candidate_id, str(outside)) is None
+    assert candidate_photo_file(str(tmp_path), uuid4(), stored) is None
+
+
+def test_enrollment_keeps_the_cv_photo_instead_of_the_face_cut() -> None:
+    class TightCrop:
+        def embed(self, image: bytes) -> FaceSample:
+            return FaceSample(embedding=[1.0], confidence=0.9, crop_jpeg=b"\xff\xd8tiny")
+
+    source = varied_png(96, 120)
+    sample = enroll_from_document("ada.pdf", _pdf(source), TightCrop())
+    assert sample is not None
+    assert sample.crop_jpeg == b"\xff\xd8tiny"
+    with Image.open(BytesIO(sample.portrait_jpeg)) as photo:
+        assert photo.size == (96, 120)
 
 
 def test_a_document_of_only_flat_images_does_not_enroll() -> None:

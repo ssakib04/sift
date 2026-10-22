@@ -22,6 +22,7 @@ class FaceSample:
     embedding: list[float]
     confidence: float
     crop_jpeg: bytes
+    portrait_jpeg: bytes = b""
 
 
 class FaceEmbedder(Protocol):

@@ -12,7 +12,6 @@ const LINKS = [
   { href: "/candidates", label: "Candidates" },
   { href: "/progress", label: "Progress" },
   { href: "/practice", label: "Practice" },
-  { href: "/careers", label: "Careers" },
 ];
 
 function isCurrent(pathname: string, href: string): boolean {
@@ -33,7 +32,7 @@ export function RecruiterNav() {
 
   return (
     <header className="flex flex-col gap-4 px-4 pt-4 lg:sticky lg:top-0 lg:h-screen lg:w-40 lg:shrink-0 lg:justify-between lg:px-3 lg:py-6">
-      <div className="flex items-center justify-between gap-4 max-lg:pr-14 lg:block">
+      <div className="flex items-center justify-between gap-4 max-lg:pr-[18rem] lg:block">
         <Link href="/" className="font-display text-2xl font-medium tracking-[-0.03em] text-ivory">
           Sift
         </Link>

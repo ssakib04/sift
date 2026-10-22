@@ -24,6 +24,7 @@ class CandidateRead(BaseModel):
     parse_status: str
     parse_method: str
     invited: bool
+    has_photo: bool = False
     fairness_flags: list[str]
     justifications: list[str]
     evaluations: list[QueryEvaluationRead]

@@ -56,7 +56,7 @@ export default function PracticePage() {
 
   return (
     <AppShell>
-      <div className="mx-auto max-w-xl space-y-8">
+      <div id="practice" className="mx-auto max-w-xl space-y-8">
         <PageHeader
           eyebrow="Practice"
           title="Try a call without a candidate"

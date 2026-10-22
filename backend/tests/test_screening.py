@@ -25,4 +25,5 @@ def test_unscored_candidate_is_listed_without_a_rank() -> None:
     assert listed.invited is False
     assert listed.email == "ada@example.com"
     assert listed.evaluations == []
+    assert listed.has_photo is False
     assert listed.created_at == datetime(2026, 10, 21, 8, 30, tzinfo=UTC)
