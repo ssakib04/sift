@@ -144,6 +144,26 @@ async def test_workflow_scores_each_answer_and_records_gaps() -> None:
     assert draft.fallback_used is False
 
 
+class RelevanceOutage:
+    async def complete(self, prompt: str, *, system: str | None = None) -> str:
+        if prompt.startswith("Score relevance"):
+            raise RuntimeError("model down")
+        return await ScriptedProvider().complete(prompt, system=system)
+
+
+@pytest.mark.asyncio
+async def test_a_failed_model_call_still_saves_a_draft() -> None:
+    draft = await draft_for_transcript(
+        FallbackLLMManager(RelevanceOutage(), RelevanceOutage(), RelevanceOutage()),
+        _checklist(),
+        _turns(),
+    )
+    assert draft.pairs[0].relevance == 0.0
+    assert draft.technical_accuracy == 3.0
+    assert draft.fallback_used is True
+    assert draft.summary == "The candidate described a FastAPI service."
+
+
 @pytest.mark.asyncio
 async def test_a_missing_dimension_score_counts_as_zero() -> None:
     provider = ScriptedProvider(relevance={"scores": []})

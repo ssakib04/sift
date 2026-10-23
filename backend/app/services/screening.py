@@ -28,7 +28,14 @@ from app.models.candidate import (
     ScoreSnapshot,
 )
 from app.models.job import JobChecklistQuery, JobVersion
-from app.schemas.screening import CandidateGroupRead, CandidateRead, InviteRead, QueryEvaluationRead
+from app.schemas.screening import (
+    CandidateGroupRead,
+    CandidateRead,
+    InviteBatchRead,
+    InviteRead,
+    InviteSkipRead,
+    QueryEvaluationRead,
+)
 from app.services.calendar import GoogleCalendarClient
 from app.services.cv_claims import store_cv_claims
 from app.services.embeddings import Embedder
@@ -36,8 +43,7 @@ from app.services.face_embed import FaceEmbedder, create_face_embedder
 from app.services.identification import store_candidate_face, store_candidate_profile
 from app.services.interview_booking import remote_busy, reserve_call, taken_windows
 from app.services.invites import InviteSender
-from app.services.notices import record_applicant_notice
-from app.services.ranking import RankInput, invite_ids, rank_candidates
+from app.services.ranking import RankInput, rank_candidates
 from app.services.schedule import BusyWindow, format_schedule, interview_zone
 
 logger = logging.getLogger(__name__)
@@ -51,6 +57,26 @@ def contact_email(given: str, attributes: dict[str, object], raw_text: str) -> s
         if match is not None:
             return match.group(0)[:320]
     return given.strip()[:320]
+
+
+class InviteError(Exception):
+    """A recruiter selection cannot be invited."""
+
+    def __init__(self, code: str, message: str) -> None:
+        self.code = code
+        self.message = message
+        super().__init__(message)
+
+
+def invite_block_reason(*, email: str, already_invited: bool, scored: bool) -> str | None:
+    """Return why this applicant cannot be invited, or None when the mail can be sent."""
+    if already_invited:
+        return "already_invited"
+    if not scored:
+        return "not_scored"
+    if "@" not in email:
+        return "no_email"
+    return None
 
 
 @dataclass(frozen=True)
@@ -118,7 +144,6 @@ async def accept_cv(
     *,
     llm: FallbackLLMManager,
     embedder: Embedder,
-    sender: InviteSender,
     face_embedder: FaceEmbedder | None = None,
     version_id: uuid.UUID,
     message_id: str,
@@ -127,7 +152,7 @@ async def accept_cv(
     data: bytes,
     media_type: str,
 ) -> str:
-    """Store one CV, score it against the locked checklist, and invite any new top-3 candidate."""
+    """Store one CV and score it against the locked checklist. Invitations stay with the recruiter."""
     digest = hashlib.sha256(data).hexdigest()
     existing = await session.scalar(
         select(Candidate).where(
@@ -136,7 +161,6 @@ async def accept_cv(
         )
     )
     if existing is not None:
-        await _dispatch_invites(session, settings, sender, version_id)
         return "duplicate"
 
     version = await session.scalar(
@@ -184,7 +208,6 @@ async def accept_cv(
         logger.warning("cv_score_failed error_type=%s", type(exc).__name__)
         _store_cv(settings, digest, filename, data, folder="failed")
         session.add(_failed_parse(candidate.id, str(exc)))
-        await record_applicant_notice(session, candidate.id, datetime.now(UTC))
         return "parse_failed"
 
     errors = result.get("errors") or []
@@ -193,7 +216,6 @@ async def accept_cv(
         session.add(
             _failed_parse(candidate.id, "; ".join(errors) or "The CV did not contain extractable text.")
         )
-        await record_applicant_notice(session, candidate.id, datetime.now(UTC))
         return "parse_failed"
 
     attributes = result.get("extracted_attributes") or {}
@@ -261,8 +283,6 @@ async def accept_cv(
         )
     await session.flush()
     await _rerank(session, version.id)
-    await record_applicant_notice(session, candidate.id, datetime.now(UTC))
-    await _dispatch_invites(session, settings, sender, version.id)
     return "scored"
 
 
@@ -387,36 +407,49 @@ async def _rerank(session: AsyncSession, version_id: uuid.UUID) -> dict[uuid.UUI
     return ranks
 
 
-async def _dispatch_invites(
+async def invite_selected(
     session: AsyncSession,
     settings: Settings,
     sender: InviteSender,
-    version_id: uuid.UUID,
-) -> None:
+    job_id: uuid.UUID,
+    candidate_ids: list[uuid.UUID],
+) -> InviteBatchRead:
+    """Mail interview links to the applicants the recruiter chose."""
+    unique_ids = list(dict.fromkeys(candidate_ids))
+    if not unique_ids:
+        raise InviteError("INVITE_EMPTY", "Choose at least one applicant.")
+    matched = next((key for key in await load_mail_keys(session) if key.job_id == job_id), None)
+    if matched is None:
+        raise InviteError("JOB_NOT_LOCKED", "Only a locked job can send invitations.")
     version = await session.scalar(
-        select(JobVersion).where(JobVersion.id == version_id).options(selectinload(JobVersion.job))
+        select(JobVersion).where(JobVersion.id == matched.version_id).options(selectinload(JobVersion.job))
     )
     if version is None or version.job is None:
-        return
+        raise InviteError("JOB_NOT_LOCKED", "Only a locked job can send invitations.")
     statement = (
         select(Candidate)
-        .where(Candidate.job_version_id == version_id)
+        .where(Candidate.id.in_(unique_ids))
         .options(selectinload(Candidate.snapshot), selectinload(Candidate.magic_link))
     )
-    candidates = list((await session.scalars(statement)).unique().all())
-    ranks = {
-        candidate.id: candidate.snapshot.rank
-        for candidate in candidates
-        if candidate.snapshot is not None and candidate.snapshot.rank is not None
-    }
-    invited = {candidate.id for candidate in candidates if candidate.magic_link is not None}
+    found = {item.id: item for item in (await session.scalars(statement)).unique().all()}
     now = datetime.now(UTC)
     busy: list[BusyWindow] = await taken_windows(session, now)
     calendar = GoogleCalendarClient(settings)
     busy.extend(await asyncio.to_thread(remote_busy, calendar, now))
-    for candidate_id in invite_ids(ranks, invited):
-        candidate = next(item for item in candidates if item.id == candidate_id)
-        if "@" not in candidate.email:
+    invited: list[uuid.UUID] = []
+    skipped: list[InviteSkipRead] = []
+    for candidate_id in unique_ids:
+        candidate = found.get(candidate_id)
+        if candidate is None or candidate.job_version_id != matched.version_id:
+            skipped.append(InviteSkipRead(candidate_id=candidate_id, reason="missing"))
+            continue
+        reason = invite_block_reason(
+            email=candidate.email,
+            already_invited=candidate.magic_link is not None,
+            scored=candidate.snapshot is not None,
+        )
+        if reason is not None:
+            skipped.append(InviteSkipRead(candidate_id=candidate_id, reason=reason))
             continue
         token = secrets.token_urlsafe(32)
         url = f"{settings.public_app_url.rstrip('/')}/invite/{token}"
@@ -434,6 +467,7 @@ async def _dispatch_invites(
             calendar=calendar,
         )
         if reserved is None:
+            skipped.append(InviteSkipRead(candidate_id=candidate_id, reason="calendar_full"))
             continue
         busy.append(BusyWindow(start=reserved.start, end=reserved.end))
         session.add(MagicLink(id=uuid.uuid4(), candidate_id=candidate.id, token=token, created_at=now))
@@ -441,7 +475,7 @@ async def _dispatch_invites(
             InterviewSession(
                 id=uuid.uuid4(),
                 candidate_id=candidate.id,
-                job_version_id=version_id,
+                job_version_id=matched.version_id,
                 status="invited",
                 created_at=now,
                 processing_status="",
@@ -456,6 +490,8 @@ async def _dispatch_invites(
             )
         )
         await session.flush()
+        invited.append(candidate_id)
+    return InviteBatchRead(invited=invited, skipped=skipped)
 
 
 def _face_embedder(settings: Settings) -> FaceEmbedder:

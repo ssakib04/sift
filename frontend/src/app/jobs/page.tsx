@@ -15,8 +15,9 @@ import {
   CandidateGroup,
   CandidateRecord,
   ChecklistQuery,
-  CvUploadResult,
+  InviteBatchResult,
   JobRecord,
+  ScoringProgress,
   apiRequest,
 } from "@/lib/api";
 
@@ -38,6 +39,26 @@ function jobTab(value: string | null): JobTab {
   return value === "people" ? "people" : "brief";
 }
 
+function canInvite(candidate: CandidateRecord): boolean {
+  return candidate.parse_status === "parsed" && candidate.rank !== null && !candidate.invited && candidate.email.includes("@");
+}
+
+function skipReason(reason: string): string {
+  if (reason === "already_invited") {
+    return "already invited";
+  }
+  if (reason === "no_email") {
+    return "no email on the CV";
+  }
+  if (reason === "not_scored") {
+    return "not scored";
+  }
+  if (reason === "calendar_full") {
+    return "no free interview time";
+  }
+  return "not on this role";
+}
+
 function indexView(value: string | null): IndexView {
   return value === "create" ? "create" : "roles";
 }
@@ -56,6 +77,7 @@ function JobsPageContent() {
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [candidates, setCandidates] = useState<CandidateRecord[]>([]);
+  const [progress, setProgress] = useState<ScoringProgress | null>(null);
 
   function applyJob(record: JobRecord) {
     const latest = record.versions[record.versions.length - 1];
@@ -237,26 +259,37 @@ function JobsPageContent() {
     }
     setBusy(true);
     setMessage("");
+    setProgress({ phase: "scoring", total: files.length, done: 0, scored: 0, label: `Scored 0 of ${files.length}` });
     try {
-      const result = await apiRequest<CvUploadResult>(`/api/v1/jobs/${job.id}/cvs`, { method: "POST", body });
+      const started = await apiRequest<ScoringProgress>(`/api/v1/jobs/${job.id}/cvs`, { method: "POST", body });
+      setProgress(started);
+    } catch (error) {
+      setProgress({ phase: "idle", total: 0, done: 0, scored: 0, label: "" });
+      setMessage(error instanceof ApiError ? error.message : "Could not upload those CVs.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function sendInvites(ids: string[]) {
+    if (!job || ids.length === 0) {
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      const result = await apiRequest<InviteBatchResult>(`/api/v1/jobs/${job.id}/invitations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ candidate_ids: ids }),
+      });
       await loadCandidates(job.id);
       await refreshLists();
-      const parts = [`${result.scored} scored`];
-      if (result.duplicate > 0) {
-        parts.push(`${result.duplicate} already stored`);
-      }
-      if (result.parse_failed > 0) {
-        parts.push(`${result.parse_failed} could not be read`);
-      }
-      if (result.invalid > 0) {
-        parts.push(`${result.invalid} were not PDF or DOCX`);
-      }
-      if (result.failed > 0) {
-        parts.push(`${result.failed} failed`);
-      }
-      setMessage(`Upload finished. ${parts.join(", ")}. Invites go to anyone who newly enters the top 3.`);
+      const sent = result.invited.length === 1 ? "1 invitation sent." : `${result.invited.length} invitations sent.`;
+      const reasons = [...new Set(result.skipped.map((item) => skipReason(item.reason)))];
+      setMessage(reasons.length > 0 ? `${sent} Skipped: ${reasons.join(", ")}.` : sent);
     } catch (error) {
-      setMessage(error instanceof ApiError ? error.message : "Could not upload those CVs.");
+      setMessage(error instanceof ApiError ? error.message : "Those invitations could not be sent.");
     } finally {
       setBusy(false);
     }
@@ -265,14 +298,15 @@ function JobsPageContent() {
   async function checkInbox() {
     setBusy(true);
     setMessage("");
+    setProgress({ phase: "scanning", total: 0, done: 0, scored: 0, label: "Checking the mailbox…" });
     try {
-      const result = await apiRequest<{ processed: number }>("/api/v1/screening/poll", { method: "POST" });
-      if (job) {
-        await loadCandidates(job.id);
+      await apiRequest("/api/v1/screening/poll", { method: "POST" });
+      setProgress({ phase: "scanning", total: 0, done: 0, scored: 0, label: "Checking the mailbox…" });
+      if (tab !== "people") {
+        setMessage("Checking the mailbox. Open a role's Applicants tab to watch scoring.");
       }
-      await refreshLists();
-      setMessage(`Inbox checked. ${result.processed} new CV${result.processed === 1 ? "" : "s"} scored.`);
     } catch (error) {
+      setProgress({ phase: "idle", total: 0, done: 0, scored: 0, label: "" });
       setMessage(error instanceof ApiError ? error.message : "Could not read the inbox.");
     } finally {
       setBusy(false);
@@ -301,6 +335,63 @@ function JobsPageContent() {
       cancelled = true;
     };
   }, [job]);
+
+  useEffect(() => {
+    if (!job || tab !== "people") {
+      return;
+    }
+    const jobId = job.id;
+    let cancelled = false;
+    let phase = "";
+    let done = -1;
+    let seenActive = false;
+
+    async function tick() {
+      try {
+        const next = await apiRequest<ScoringProgress>(`/api/v1/jobs/${jobId}/scoring`);
+        if (cancelled) {
+          return;
+        }
+        const active = next.phase === "scanning" || next.phase === "scoring";
+        const wasActive = phase === "scanning" || phase === "scoring";
+        if (active) {
+          seenActive = true;
+        }
+        if ((active && next.done !== done) || (wasActive && !active)) {
+          const rows = await apiRequest<CandidateRecord[]>(`/api/v1/jobs/${jobId}/candidates`);
+          if (!cancelled) {
+            setCandidates(rows);
+          }
+        }
+        if (wasActive && next.phase === "complete" && next.label) {
+          setMessage(next.label);
+        }
+        phase = next.phase;
+        done = next.done;
+        if (!cancelled) {
+          setProgress((current) => {
+            if (
+              next.phase === "idle" &&
+              !seenActive &&
+              (current?.phase === "scanning" || current?.phase === "scoring")
+            ) {
+              return current;
+            }
+            return next;
+          });
+        }
+      } catch {
+        return;
+      }
+    }
+
+    void tick();
+    const timer = window.setInterval(() => void tick(), 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [job, tab]);
 
   const counts = new Map(groups.map((group) => [group.job_id, group.candidates.length]));
   const latest = job?.versions[job.versions.length - 1];
@@ -331,6 +422,8 @@ function JobsPageContent() {
             onNewVersion={() => void newVersion()}
             onUpload={(files) => void uploadCvs(files)}
             onInbox={() => void checkInbox()}
+            onInvite={(ids) => void sendInvites(ids)}
+            progress={progress}
           />
         ) : (
           <RoleIndex
@@ -489,6 +582,8 @@ function RoleDesk({
   onNewVersion,
   onUpload,
   onInbox,
+  onInvite,
+  progress,
 }: {
   job: JobRecord;
   latestNumber: number;
@@ -507,6 +602,8 @@ function RoleDesk({
   onNewVersion: () => void;
   onUpload: (files: File[]) => void;
   onInbox: () => void;
+  onInvite: (ids: string[]) => void;
+  progress: ScoringProgress | null;
 }) {
   const latest = job.versions[job.versions.length - 1];
   const canTakePeople = job.versions.some((version) => version.status === "locked");
@@ -539,6 +636,8 @@ function RoleDesk({
           busy={busy}
           onUpload={onUpload}
           onInbox={onInbox}
+          onInvite={onInvite}
+          progress={progress}
         />
       ) : (
         <Brief
@@ -674,6 +773,8 @@ function Applicants({
   busy,
   onUpload,
   onInbox,
+  onInvite,
+  progress,
 }: {
   job: JobRecord;
   candidates: CandidateRecord[];
@@ -681,7 +782,34 @@ function Applicants({
   busy: boolean;
   onUpload: (files: File[]) => void;
   onInbox: () => void;
+  onInvite: (ids: string[]) => void;
+  progress: ScoringProgress | null;
 }) {
+  const [selected, setSelected] = useState<string[]>([]);
+
+  useEffect(() => {
+    setSelected(
+      candidates
+        .filter((candidate) => candidate.rank !== null && candidate.rank <= 3 && canInvite(candidate))
+        .map((candidate) => candidate.id),
+    );
+  }, [candidates]);
+
+  function chooseTop(limit: number) {
+    setSelected(
+      candidates
+        .filter((candidate) => candidate.rank !== null && candidate.rank <= limit && canInvite(candidate))
+        .map((candidate) => candidate.id),
+    );
+  }
+
+  function toggle(candidateId: string) {
+    setSelected((current) =>
+      current.includes(candidateId) ? current.filter((id) => id !== candidateId) : [...current, candidateId],
+    );
+  }
+  const scoring = progress?.phase === "scanning" || progress?.phase === "scoring";
+  const width = progress && progress.total > 0 ? Math.min(100, Math.round((progress.done / progress.total) * 100)) : 0;
   if (!ready) {
     return (
       <div id="people">
@@ -699,7 +827,7 @@ function Applicants({
           <div className="space-y-1">
             <h2 className="font-display text-2xl font-medium text-ivory">People for this role</h2>
             <p className="max-w-xl text-sm text-mist">
-              Mail a PDF or DOCX to {job.apply_email}. Subject: {job.mail_subject}. The job id {job.id} also matches. Upload does the same scoring, and invites still go to the top 3.
+              Mail a PDF or DOCX to {job.apply_email}. Subject: {job.mail_subject}. The job id {job.id} also matches. Scoring updates the ranking. Invitations go out when you send them.
             </p>
           </div>
           <Link href={`/candidates?job=${job.id}&view=people`} className="text-sm font-semibold text-amber hover:text-peach">
@@ -708,12 +836,12 @@ function Applicants({
         </div>
         <div className="flex flex-wrap gap-3">
           <label className={`${buttonClass("secondary")} cursor-pointer`}>
-            {busy ? "Working…" : "Upload CVs"}
+            {scoring ? "Scoring…" : busy ? "Working…" : "Upload CVs"}
             <input
               type="file"
               accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
               multiple
-              disabled={busy}
+              disabled={busy || scoring}
               className="sr-only"
               onChange={(event) => {
                 const chosen = event.target.files ? Array.from(event.target.files) : [];
@@ -722,23 +850,82 @@ function Applicants({
               }}
             />
           </label>
-          <button type="button" onClick={onInbox} disabled={busy} className={buttonClass("secondary")}>
+          <button type="button" onClick={onInbox} disabled={busy || scoring} className={buttonClass("secondary")}>
             Check inbox
           </button>
         </div>
+        {scoring && progress ? (
+          <div className="space-y-2">
+            <div
+              role="progressbar"
+              aria-label={progress.label}
+              aria-valuemin={0}
+              aria-valuemax={progress.total > 0 ? progress.total : undefined}
+              aria-valuenow={progress.phase === "scoring" ? progress.done : undefined}
+              className="h-1.5 overflow-hidden rounded-full bg-ivory/10"
+            >
+              <div
+                className={`h-full rounded-full bg-amber ${progress.phase === "scanning" ? "w-1/3 animate-pulse" : ""}`}
+                style={progress.phase === "scanning" ? undefined : { width: `${width}%` }}
+              />
+            </div>
+            <p className="text-sm text-mist">{progress.label}</p>
+          </div>
+        ) : null}
         {candidates.length === 0 ? <p className="text-sm text-mist">No applicants yet.</p> : null}
+        {candidates.length > 0 ? (
+          <div className="flex flex-wrap items-center gap-2">
+            {[3, 4, 5].map((limit) => (
+              <button
+                key={limit}
+                type="button"
+                disabled={busy}
+                onClick={() => chooseTop(limit)}
+                className={buttonClass("secondary")}
+              >
+                Top {limit}
+              </button>
+            ))}
+            <button
+              type="button"
+              disabled={busy || selected.length === 0}
+              onClick={() => onInvite(selected)}
+              className={buttonClass()}
+            >
+              Send invitations
+            </button>
+          </div>
+        ) : null}
         <ul className="divide-y divide-ivory/10">
-          {candidates.map((candidate) => (
-            <li key={candidate.id} className="flex items-baseline justify-between gap-4 py-3 text-sm">
-              <Link href={`/candidates/${candidate.id}`} className="font-medium text-ivory hover:text-amber">
-                {candidate.rank ? `#${candidate.rank}` : "Unranked"} · {candidate.full_name || "Unnamed"}
-              </Link>
-              <span className="text-mist">
-                {candidate.aggregate_score !== null ? candidate.aggregate_score.toFixed(2) : candidate.parse_status}
-                {candidate.invited ? " · invited" : ""}
-              </span>
-            </li>
-          ))}
+          {candidates.map((candidate) => {
+            const allowed = canInvite(candidate);
+            const note = candidate.invited
+              ? "Invited"
+              : candidate.email.includes("@")
+                ? ""
+                : "No email on the CV";
+            return (
+              <li key={candidate.id} className="flex items-center justify-between gap-4 py-3 text-sm">
+                <div className="flex min-w-0 items-center gap-3">
+                  <input
+                    type="checkbox"
+                    aria-label={`Invite ${candidate.full_name || "this applicant"}`}
+                    className="h-4 w-4 accent-amber"
+                    checked={selected.includes(candidate.id)}
+                    disabled={!allowed || busy}
+                    onChange={() => toggle(candidate.id)}
+                  />
+                  <Link href={`/candidates/${candidate.id}`} className="truncate font-medium text-ivory hover:text-amber">
+                    {candidate.rank ? `#${candidate.rank}` : "Unranked"} · {candidate.full_name || "Unnamed"}
+                  </Link>
+                </div>
+                <span className="shrink-0 text-mist">
+                  {candidate.aggregate_score !== null ? candidate.aggregate_score.toFixed(2) : candidate.parse_status}
+                  {note ? ` · ${note}` : ""}
+                </span>
+              </li>
+            );
+          })}
         </ul>
       </div>
     </Panel>

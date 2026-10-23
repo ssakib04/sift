@@ -24,6 +24,10 @@ class ComponentScoresRead(BaseModel):
     qualification_dimension: float | None = None
 
 
+class AssessmentRunRead(BaseModel):
+    state: Literal["started"]
+
+
 class AssessmentRead(BaseModel):
     candidate_id: UUID
     full_name: str
@@ -43,6 +47,8 @@ class AssessmentRead(BaseModel):
     llm_tier: str
     fallback_used: bool
     created_at: datetime
+    run_state: Literal["idle", "running", "failed"] = "idle"
+    run_message: str = ""
 
 
 class ComparisonRowRead(BaseModel):

@@ -39,6 +39,9 @@ export function CandidateReport({
   reviewing,
   onReview,
   analysis,
+  analysisStatus,
+  analysisNote,
+  onRerunAnalysis,
   claims,
   checking,
   onCheckClaims,
@@ -57,6 +60,9 @@ export function CandidateReport({
   reviewing: boolean;
   onReview: () => void;
   analysis: InterviewAnalysis | null;
+  analysisStatus: "ready" | "pending" | "failed" | "missing";
+  analysisNote: string;
+  onRerunAnalysis: () => void;
   claims: ClaimVerification | null;
   checking: boolean;
   onCheckClaims: () => void;
@@ -77,7 +83,14 @@ export function CandidateReport({
     return <QualityReport quality={quality} reviewing={reviewing} onReview={onReview} />;
   }
   if (selected === "qa") {
-    return <QaReport analysis={analysis} />;
+    return (
+      <QaReport
+        analysis={analysis}
+        status={analysisStatus}
+        note={analysisNote}
+        onRetry={onRerunAnalysis}
+      />
+    );
   }
   if (selected === "claims") {
     return <ClaimsReport claims={claims} checking={checking} onCheckClaims={onCheckClaims} />;
@@ -212,9 +225,35 @@ function QualityReport({
   );
 }
 
-function QaReport({ analysis }: { analysis: InterviewAnalysis | null }) {
+function QaReport({
+  analysis,
+  status,
+  note,
+  onRetry,
+}: {
+  analysis: InterviewAnalysis | null;
+  status: "ready" | "pending" | "failed" | "missing";
+  note: string;
+  onRetry: () => void;
+}) {
   if (!analysis) {
-    return <p className="text-sm text-mist">The question and answer analysis appears after the interview ends.</p>;
+    const writing = status === "pending";
+    const failed = status === "failed";
+    return (
+      <section className="space-y-3">
+        <h2 className="font-display text-2xl font-medium text-ivory">Q&A analysis</h2>
+        <p className="text-sm text-mist">
+          {writing
+            ? "Writing the question and answer analysis."
+            : failed
+              ? note || "The question and answer analysis did not finish."
+              : "The question and answer analysis appears after the interview ends."}
+        </p>
+        <button type="button" onClick={onRetry} className={buttonClass()}>
+          {writing ? "Run again" : "Run analysis"}
+        </button>
+      </section>
+    );
   }
   return (
     <section className="space-y-4">
@@ -482,7 +521,9 @@ function AssessmentReport({
         </div>
       ) : (
         <p className="text-sm text-mist">
-          Build the report from the CV screening snapshot, the submitted quiz score, and the post-call Q&A analysis.
+          {building
+            ? "Writing the master assessment. You can leave this page and come back."
+            : "Build the report from the CV screening snapshot, the submitted quiz score, and the post-call Q&A analysis."}
         </p>
       )}
     </section>

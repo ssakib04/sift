@@ -1,12 +1,14 @@
+import logging
+from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_app_settings, get_embedder, get_llm
 from app.core.config import Settings
-from app.core.database import get_session
+from app.core.database import SessionFactory, get_session
 from app.core.llm_fallback import FallbackLLMManager
 from app.models.candidate import CandidateFace
 from app.schemas.screening import CandidateGroupRead, CandidateRead, InboxPollRead
@@ -14,28 +16,42 @@ from app.services.face_images import candidate_photo_file
 from app.services.email_worker import ingest_inbox
 from app.services.embeddings import Embedder
 from app.services.gmail_mailbox import mailbox_from_settings
-from app.services.invites import SmtpInviteSender
-from app.services.screening import get_candidate, list_candidate_groups, list_ranked_candidates
+from app.services.scoring_progress import begin_scanning
+from app.services.screening import get_candidate, list_candidate_groups, list_ranked_candidates, load_mail_keys
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 
+async def _score_inbox(settings: Settings, llm: FallbackLLMManager, embedder: Embedder) -> None:
+    async with SessionFactory() as session:
+        try:
+            await ingest_inbox(
+                session,
+                settings,
+                llm=llm,
+                embedder=embedder,
+                mailbox=mailbox_from_settings(settings),
+                announce=True,
+            )
+        except Exception:
+            logger.exception("inbox_score_failed")
+
+
 @router.post("/screening/poll", response_model=InboxPollRead)
 async def poll_inbox(
+    background: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_app_settings),
     llm: FallbackLLMManager = Depends(get_llm),
     embedder: Embedder = Depends(get_embedder),
 ) -> InboxPollRead:
-    processed = await ingest_inbox(
-        session,
-        settings,
-        llm=llm,
-        embedder=embedder,
-        mailbox=mailbox_from_settings(settings),
-        sender=SmtpInviteSender(settings),
-    )
-    return InboxPollRead(processed=processed)
+    keys = await load_mail_keys(session)
+    await begin_scanning(session, [key.job_id for key in keys], datetime.now(UTC))
+    await session.commit()
+    background.add_task(_score_inbox, settings, llm, embedder)
+    return InboxPollRead(state="started")
 
 
 @router.get("/candidates", response_model=list[CandidateGroupRead])

@@ -203,10 +203,10 @@ export function PersistentChatbot() {
     setBusy(true);
     try {
       if (chip.confirm === "inbox") {
-        const result = await apiRequest<{ processed: number }>("/api/v1/screening/poll", { method: "POST" });
+        await apiRequest("/api/v1/screening/poll", { method: "POST" });
         setLines((current) => [
           ...current,
-          spoken(`Inbox checked. ${result.processed} new CV${result.processed === 1 ? "" : "s"} scored.`),
+          spoken("Checking the mailbox. Scoring progress shows on the role's Applicants tab."),
         ]);
         return;
       }

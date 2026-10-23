@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 
 import { CandidateReport, REPORTS, reportKey } from "@/components/candidate-reports";
@@ -9,7 +9,9 @@ import { AppShell } from "@/components/ui/app-shell";
 import { buttonClass } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/page-header";
 import {
+  AnalysisRun,
   ApiError,
+  AssessmentRun,
   CandidateRecord,
   ClaimVerification,
   InterviewAnalysis,
@@ -35,7 +37,10 @@ function CandidateProfilePage() {
   const [score, setScore] = useState<InterviewScore | null>(null);
   const [quality, setQuality] = useState<InterviewQuality | null>(null);
   const [analysis, setAnalysis] = useState<InterviewAnalysis | null>(null);
+  const [analysisStatus, setAnalysisStatus] = useState<"ready" | "pending" | "failed" | "missing">("missing");
+  const [analysisNote, setAnalysisNote] = useState("");
   const [message, setMessage] = useState("");
+  const assessmentStamp = useRef("");
   const [joining, setJoining] = useState(false);
   const [building, setBuilding] = useState(false);
   const [checking, setChecking] = useState(false);
@@ -61,10 +66,28 @@ function CandidateProfilePage() {
         setMessage(error instanceof Error ? error.message : "Could not load the CV follow-up prompts.");
       });
     apiRequest<MasterAssessment>(`/api/v1/candidates/${params.candidateId}/assessment`)
-      .then(setAssessment)
+      .then((row) => {
+        setAssessment(row);
+        if (row.run_state === "running") {
+          setBuilding(true);
+        }
+        if (row.run_state === "failed" && row.run_message) {
+          setMessage(row.run_message);
+        }
+      })
       .catch((error: unknown) => {
         if (error instanceof ApiError && error.code === "ASSESSMENT_NOT_FOUND") {
           setAssessment(null);
+          return;
+        }
+        if (error instanceof ApiError && error.code === "ASSESSMENT_PENDING") {
+          setAssessment(null);
+          setBuilding(true);
+          return;
+        }
+        if (error instanceof ApiError && error.code === "ASSESSMENT_FAILED") {
+          setAssessment(null);
+          setMessage(error.message);
           return;
         }
         if (error instanceof ApiError && error.code === "CANDIDATE_NOT_FOUND") {
@@ -91,32 +114,152 @@ function CandidateProfilePage() {
         setMessage(error instanceof Error ? error.message : "Could not load the interview quality review.");
       });
     apiRequest<InterviewAnalysis>(`/api/v1/candidates/${params.candidateId}/interview-analysis`)
-      .then(setAnalysis)
+      .then((row) => {
+        setAnalysis(row);
+        setAnalysisStatus("ready");
+      })
       .catch((error: unknown) => {
+        if (error instanceof ApiError && error.code === "ANALYSIS_PENDING") {
+          setAnalysis(null);
+          setAnalysisStatus("pending");
+          return;
+        }
+        if (error instanceof ApiError && error.code === "ANALYSIS_FAILED") {
+          setAnalysis(null);
+          setAnalysisStatus("failed");
+          setAnalysisNote(error.message);
+          return;
+        }
         if (error instanceof ApiError && (error.code === "ANALYSIS_NOT_FOUND" || error.code === "CANDIDATE_NOT_FOUND")) {
           setAnalysis(null);
+          setAnalysisStatus("missing");
           return;
         }
         setMessage(error instanceof Error ? error.message : "Could not load the question and answer analysis.");
       });
   }, [params.candidateId]);
 
+  useEffect(() => {
+    assessmentStamp.current = assessment?.created_at ?? "";
+  }, [assessment]);
+
+  useEffect(() => {
+    if (analysisStatus !== "pending") {
+      return;
+    }
+    let stopped = false;
+    const timer = window.setInterval(() => {
+      void apiRequest<InterviewAnalysis>(`/api/v1/candidates/${params.candidateId}/interview-analysis`)
+        .then((row) => {
+          if (stopped) {
+            return;
+          }
+          setAnalysis(row);
+          setAnalysisStatus("ready");
+          setAnalysisNote("");
+        })
+        .catch((error: unknown) => {
+          if (stopped || (error instanceof ApiError && error.code === "ANALYSIS_PENDING")) {
+            return;
+          }
+          if (error instanceof ApiError && error.code === "ANALYSIS_FAILED") {
+            setAnalysisStatus("failed");
+            setAnalysisNote(error.message);
+          }
+        });
+    }, 2000);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, [analysisStatus, params.candidateId]);
+
+  useEffect(() => {
+    if (!building) {
+      return;
+    }
+    const before = assessmentStamp.current;
+    const deadline = Date.now() + 4 * 60 * 1000;
+    let stopped = false;
+    const timer = window.setInterval(() => {
+      if (Date.now() > deadline) {
+        setMessage("The master assessment is still being written. It will appear on this page when it finishes.");
+        setBuilding(false);
+        return;
+      }
+      void apiRequest<MasterAssessment>(`/api/v1/candidates/${params.candidateId}/assessment`)
+        .then((next) => {
+          if (stopped || next.run_state === "running") {
+            return;
+          }
+          if (next.run_state === "failed") {
+            setMessage(next.run_message || "The master assessment could not be built.");
+            setAssessment(next);
+            setBuilding(false);
+            return;
+          }
+          if (!before || next.created_at !== before) {
+            setAssessment(next);
+            setBuilding(false);
+          }
+        })
+        .catch((error: unknown) => {
+          if (stopped) {
+            return;
+          }
+          if (error instanceof ApiError && (error.code === "ASSESSMENT_PENDING" || error.code === "ASSESSMENT_NOT_FOUND")) {
+            return;
+          }
+          if (error instanceof ApiError && error.code === "ASSESSMENT_FAILED") {
+            setMessage(error.message);
+            setBuilding(false);
+            return;
+          }
+          if (!(error instanceof ApiError)) {
+            return;
+          }
+          setMessage(error.message);
+          setBuilding(false);
+        });
+    }, 2000);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, [building, params.candidateId]);
+
   function openReport(key: string) {
     router.replace(`/candidates/${params.candidateId}?report=${key}`);
   }
 
   async function buildAssessment() {
-    setBuilding(true);
     setMessage("");
+    setBuilding(true);
     try {
-      const built = await apiRequest<MasterAssessment>(`/api/v1/candidates/${params.candidateId}/assessment`, {
+      await apiRequest<AssessmentRun>(`/api/v1/candidates/${params.candidateId}/assessment`, {
         method: "POST",
       });
-      setAssessment(built);
     } catch (error: unknown) {
-      setMessage(error instanceof Error ? error.message : "The master assessment could not be built.");
-    } finally {
       setBuilding(false);
+      setMessage(error instanceof Error ? error.message : "The master assessment could not be built.");
+    }
+  }
+
+  async function rerunAnalysis() {
+    setAnalysisNote("");
+    setAnalysisStatus("pending");
+    try {
+      const run = await apiRequest<AnalysisRun>(`/api/v1/candidates/${params.candidateId}/interview-analysis`, {
+        method: "POST",
+      });
+      if (run.state === "ready") {
+        const row = await apiRequest<InterviewAnalysis>(`/api/v1/candidates/${params.candidateId}/interview-analysis`);
+        setAnalysis(row);
+        setAnalysisStatus("ready");
+      }
+    } catch (error: unknown) {
+      setAnalysisStatus("failed");
+      setAnalysisNote(error instanceof Error ? error.message : "The question and answer analysis did not finish.");
     }
   }
 
@@ -236,6 +379,9 @@ function CandidateProfilePage() {
               reviewing={reviewing}
               onReview={() => void reviewInterview()}
               analysis={analysis}
+              analysisStatus={analysisStatus}
+              analysisNote={analysisNote}
+              onRerunAnalysis={() => void rerunAnalysis()}
               claims={claims}
               checking={checking}
               onCheckClaims={() => void checkClaims()}

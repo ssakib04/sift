@@ -284,8 +284,25 @@ async def read_candidate_analysis(db: AsyncSession, candidate_id: uuid.UUID) -> 
         .options(selectinload(InterviewAnalysis.pairs))
     )
     if analysis is None:
-        raise ScoreError("ANALYSIS_NOT_FOUND", "The question and answer analysis is not ready.", 404)
+        raise analysis_absence(interview.processing_status or "")
     return analysis
+
+
+def analysis_absence(processing_status: str) -> ScoreError:
+    """The analysis row is missing. Say whether the write failed, is still running, or never started."""
+    if processing_status == "failed":
+        return ScoreError(
+            "ANALYSIS_FAILED",
+            "The question and answer analysis did not finish. Run it again.",
+            409,
+        )
+    if processing_status == "pending":
+        return ScoreError(
+            "ANALYSIS_PENDING",
+            "The question and answer analysis is still being written.",
+            404,
+        )
+    return ScoreError("ANALYSIS_NOT_FOUND", "The question and answer analysis is not ready.", 404)
 
 
 async def list_interview_history(db: AsyncSession) -> list[InterviewHistoryRead]:

@@ -62,6 +62,7 @@ def _key() -> JobMailKey:
 async def test_upload_scores_a_pdf_and_skips_a_file_that_is_not_a_cv(monkeypatch: pytest.MonkeyPatch) -> None:
     key = _key()
     seen: list[dict[str, object]] = []
+    notices: list[str] = []
 
     async def fake_keys(_session: object) -> list[JobMailKey]:
         return [key]
@@ -70,16 +71,21 @@ async def test_upload_scores_a_pdf_and_skips_a_file_that_is_not_a_cv(monkeypatch
         seen.append(kwargs)
         return "scored"
 
+    async def fake_notice(_session: object, *, job_id: object, summary: str, now: object) -> None:
+        assert job_id == key.job_id
+        assert now is not None
+        notices.append(summary)
+
     monkeypatch.setattr("app.services.cv_upload.load_mail_keys", fake_keys)
     monkeypatch.setattr("app.services.cv_upload.accept_cv", fake_accept)
     monkeypatch.setattr("app.services.cv_upload.create_face_embedder", lambda _settings: object())
+    monkeypatch.setattr("app.services.cv_upload.record_ranking_notice", fake_notice)
     session = _Session()
     result = await upload_job_cvs(
         session,  # type: ignore[arg-type]
         object(),  # type: ignore[arg-type]
         llm=object(),  # type: ignore[arg-type]
         embedder=object(),  # type: ignore[arg-type]
-        sender=object(),  # type: ignore[arg-type]
         job_id=key.job_id,
         files=[
             UploadedCv("notes.txt", b"hello"),
@@ -89,7 +95,9 @@ async def test_upload_scores_a_pdf_and_skips_a_file_that_is_not_a_cv(monkeypatch
     assert [item.outcome for item in result.items] == ["invalid", "scored"]
     assert result.scored == 1
     assert result.invalid == 1
-    assert session.commits == 1
+    assert session.commits == 2
+    assert notices[0].startswith("1 CV scored for Engineer.")
+    assert "choose who to invite" in notices[0]
     assert seen[0]["version_id"] == key.version_id
     assert seen[0]["from_address"] == ""
     assert str(seen[0]["message_id"]).startswith("upload-")
@@ -107,7 +115,6 @@ async def test_upload_refuses_a_job_that_is_not_locked(monkeypatch: pytest.Monke
             object(),  # type: ignore[arg-type]
             llm=object(),  # type: ignore[arg-type]
             embedder=object(),  # type: ignore[arg-type]
-            sender=object(),  # type: ignore[arg-type]
             job_id=uuid.uuid4(),
             files=[UploadedCv("ada.pdf", b"%PDF-1.4 sample")],
         )
@@ -138,7 +145,6 @@ async def test_one_failed_cv_does_not_stop_the_rest(monkeypatch: pytest.MonkeyPa
         object(),  # type: ignore[arg-type]
         llm=object(),  # type: ignore[arg-type]
         embedder=object(),  # type: ignore[arg-type]
-        sender=object(),  # type: ignore[arg-type]
         job_id=key.job_id,
         files=[
             UploadedCv("one.pdf", b"%PDF-1.4 one"),

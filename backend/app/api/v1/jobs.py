@@ -1,22 +1,28 @@
+import logging
+from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_app_settings, get_embedder, get_llm, get_poster
 from app.core.config import Settings
-from app.core.database import get_session
+from app.core.database import SessionFactory, get_session
 from app.core.llm_fallback import FallbackLLMManager, LLMFallbackExhaustedError
 from app.graphs.job_creation_graph import JobGraphError
 from app.schemas.job import JobCreateRequest, JobRead, JobVersionUpdate
-from app.schemas.screening import CvUploadRead
-from app.services.cv_upload import UploadError, UploadedCv, upload_job_cvs
+from app.schemas.screening import InviteBatchRead, InviteSelectionRequest, ScoringProgressRead
+from app.services.cv_upload import UploadError, UploadedCv, check_upload_count, upload_job_cvs
 from app.services.embeddings import Embedder
 from app.services.invites import SmtpInviteSender
 from app.services.job_rules import ChecklistLockedError
 from app.services.job_service import approve_version, create_job, get_job, list_jobs, open_next_version, update_draft
 from app.services.policy_ingest import PgPolicyRetriever
 from app.services.postajob import JobPoster
+from app.services.scoring_progress import advance_progress, begin_scoring, read_progress, stop_progress
+from app.services.screening import InviteError, invite_selected, load_mail_keys
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/jobs")
 
@@ -107,29 +113,89 @@ async def approve_job_version(
         ) from exc
 
 
-@router.post("/{job_id}/cvs", response_model=CvUploadRead)
+async def _score_upload(
+    settings: Settings,
+    llm: FallbackLLMManager,
+    embedder: Embedder,
+    job_id: UUID,
+    files: list[UploadedCv],
+) -> None:
+    async with SessionFactory() as session:
+        async def on_settled(outcome: str) -> None:
+            await advance_progress(session, job_id, scored=outcome == "scored", now=datetime.now(UTC))
+
+        try:
+            await upload_job_cvs(
+                session,
+                settings,
+                llm=llm,
+                embedder=embedder,
+                job_id=job_id,
+                files=files,
+                on_settled=on_settled,
+            )
+        except Exception:
+            logger.exception("cv_upload_failed")
+            await session.rollback()
+            await stop_progress(session, [job_id], datetime.now(UTC))
+            await session.commit()
+
+
+@router.get("/{job_id}/scoring", response_model=ScoringProgressRead)
+async def read_job_scoring(
+    job_id: UUID,
+    session: AsyncSession = Depends(get_session),
+) -> ScoringProgressRead:
+    return await read_progress(session, job_id)
+
+
+@router.post("/{job_id}/cvs", response_model=ScoringProgressRead)
 async def upload_cvs(
     job_id: UUID,
+    background: BackgroundTasks,
     files: list[UploadFile] = File(...),
     session: AsyncSession = Depends(get_session),
     llm: FallbackLLMManager = Depends(get_llm),
     embedder: Embedder = Depends(get_embedder),
     settings: Settings = Depends(get_app_settings),
-) -> CvUploadRead:
+) -> ScoringProgressRead:
     payloads = [UploadedCv(filename=file.filename or "cv", data=await file.read()) for file in files]
     try:
-        return await upload_job_cvs(
+        check_upload_count(len(payloads))
+    except UploadError as exc:
+        raise HTTPException(status_code=422, detail={"error_code": exc.code, "message": exc.message}) from exc
+    matched = next((key for key in await load_mail_keys(session) if key.job_id == job_id), None)
+    if matched is None:
+        raise HTTPException(
+            status_code=409,
+            detail={"error_code": "JOB_NOT_LOCKED", "message": "Only a locked job can receive CVs."},
+        )
+    progress = await begin_scoring(session, job_id, len(payloads), datetime.now(UTC))
+    await session.commit()
+    background.add_task(_score_upload, settings, llm, embedder, job_id, payloads)
+    return progress
+
+
+@router.post("/{job_id}/invitations", response_model=InviteBatchRead)
+async def send_invitations(
+    job_id: UUID,
+    request: InviteSelectionRequest,
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_app_settings),
+) -> InviteBatchRead:
+    try:
+        result = await invite_selected(
             session,
             settings,
-            llm=llm,
-            embedder=embedder,
-            sender=SmtpInviteSender(settings),
-            job_id=job_id,
-            files=payloads,
+            SmtpInviteSender(settings),
+            job_id,
+            request.candidate_ids,
         )
-    except UploadError as exc:
+    except InviteError as exc:
         status = 409 if exc.code == "JOB_NOT_LOCKED" else 422
         raise HTTPException(status_code=status, detail={"error_code": exc.code, "message": exc.message}) from exc
+    await session.commit()
+    return result
 
 
 @router.post("/{job_id}/versions", response_model=JobRead, status_code=201)

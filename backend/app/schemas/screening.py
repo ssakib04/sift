@@ -42,7 +42,15 @@ class CandidateGroupRead(BaseModel):
 
 
 class InboxPollRead(BaseModel):
-    processed: int = Field(ge=0)
+    state: str
+
+
+class ScoringProgressRead(BaseModel):
+    phase: str
+    total: int = Field(ge=0)
+    done: int = Field(ge=0)
+    scored: int = Field(ge=0)
+    label: str = ""
 
 
 class CvUploadItemRead(BaseModel):
@@ -57,6 +65,20 @@ class CvUploadRead(BaseModel):
     invalid: int = Field(ge=0)
     failed: int = Field(ge=0)
     items: list[CvUploadItemRead]
+
+
+class InviteSelectionRequest(BaseModel):
+    candidate_ids: list[UUID] = Field(min_length=1)
+
+
+class InviteSkipRead(BaseModel):
+    candidate_id: UUID
+    reason: str
+
+
+class InviteBatchRead(BaseModel):
+    invited: list[UUID]
+    skipped: list[InviteSkipRead]
 
 
 class InviteRead(BaseModel):

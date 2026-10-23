@@ -6,7 +6,8 @@ from pydantic import BaseModel, Field
 
 class ApplicantNoticeRead(BaseModel):
     id: UUID
-    candidate_id: UUID
+    candidate_id: UUID | None = None
+    job_id: UUID | None = None
     full_name: str
     job_title: str
     rank: int | None

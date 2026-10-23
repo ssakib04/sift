@@ -95,3 +95,16 @@ class JobPosting(Base):
     detail: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     version: Mapped[JobVersion] = relationship(back_populates="posting")
+
+
+class ScoringProgress(Base):
+    """Live count for a CV batch so the recruiter can watch scoring."""
+
+    __tablename__ = "scoring_progress"
+
+    job_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("jobs.id", ondelete="CASCADE"), primary_key=True)
+    phase: Mapped[str] = mapped_column(String(16))
+    total: Mapped[int] = mapped_column(Integer, default=0)
+    done: Mapped[int] = mapped_column(Integer, default=0)
+    scored: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

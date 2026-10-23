@@ -6,7 +6,7 @@ from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, Stri
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
-from app.models.job import JobVersion
+from app.models.job import Job, JobVersion
 
 FACE_DIMENSIONS = 512
 
@@ -168,15 +168,23 @@ class ApplicantNotification(Base):
     __tablename__ = "applicant_notifications"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    candidate_id: Mapped[uuid.UUID] = mapped_column(
+    candidate_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid,
         ForeignKey("candidates.id", ondelete="CASCADE"),
         unique=True,
+        nullable=True,
     )
+    job_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("jobs.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    summary: Mapped[str] = mapped_column(Text, default="", server_default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    candidate: Mapped[Candidate] = relationship()
+    candidate: Mapped[Candidate | None] = relationship()
+    job: Mapped[Job | None] = relationship()
 
 
 class MagicLink(Base):

@@ -32,7 +32,7 @@ from app.models.candidate import (
     ScoreSnapshot,
     TranscriptSegment,
 )
-from app.models.job import Job, JobChecklistQuery, JobPosting, JobVersion
+from app.models.job import Job, JobChecklistQuery, JobPosting, JobVersion, ScoringProgress
 from app.models.policy import PolicyChunk, PolicyDocument
 
 __all__ = [
@@ -71,5 +71,6 @@ __all__ = [
     "QAPair",
     "QueryEvaluation",
     "ScoreSnapshot",
+    "ScoringProgress",
     "TranscriptSegment",
 ]

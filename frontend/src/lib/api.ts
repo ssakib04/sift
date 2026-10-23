@@ -43,6 +43,14 @@ export type JobVersion = {
   fallback_used: boolean;
 };
 
+export type AssessmentRun = {
+  state: "started";
+};
+
+export type AnalysisRun = {
+  state: "started" | "ready";
+};
+
 export type JobRecord = {
   id: string;
   title: string;
@@ -85,6 +93,19 @@ export type CvUploadResult = {
   invalid: number;
   failed: number;
   items: { filename: string; outcome: string }[];
+};
+
+export type ScoringProgress = {
+  phase: "idle" | "scanning" | "scoring" | "complete" | string;
+  total: number;
+  done: number;
+  scored: number;
+  label: string;
+};
+
+export type InviteBatchResult = {
+  invited: string[];
+  skipped: { candidate_id: string; reason: string }[];
 };
 
 export type CandidateGroup = {
@@ -194,6 +215,9 @@ export type MasterAssessment = {
   cv_weight: number;
   mcq_weight: number;
   interview_weight: number;
+  created_at?: string;
+  run_state?: "idle" | "running" | "failed";
+  run_message?: string;
 };
 
 export type ComparisonRow = {
@@ -280,7 +304,8 @@ export type InviteRecord = {
 
 export type ApplicantNotice = {
   id: string;
-  candidate_id: string;
+  candidate_id: string | null;
+  job_id: string | null;
   full_name: string;
   job_title: string;
   rank: number | null;

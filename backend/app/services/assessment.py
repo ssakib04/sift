@@ -172,9 +172,18 @@ async def build_consolidated_assessment(
         raise AssessmentError("ASSESSMENT_INPUT_INVALID", str(exc), 400) from exc
     except LLMFallbackExhaustedError as exc:
         raise AssessmentError("LLM_UNAVAILABLE", "The assessment model is unavailable.", 503) from exc
-    row = await _save(session, candidate, result)
+    await _save(session, candidate, result)
     await session.commit()
-    return assessment_read(candidate, row)
+    session.expire(candidate, ["consolidated_assessment"])
+    fresh = await session.scalar(
+        select(Candidate)
+        .where(Candidate.id == candidate.id)
+        .options(*_candidate_loader())
+        .execution_options(populate_existing=True)
+    )
+    if fresh is None or fresh.consolidated_assessment is None:
+        raise AssessmentError("ASSESSMENT_NOT_FOUND", "The master assessment could not be saved.", 500)
+    return assessment_read(fresh, fresh.consolidated_assessment)
 
 
 async def get_assessment(session: AsyncSession, candidate_id: uuid.UUID) -> AssessmentRead:
@@ -279,10 +288,9 @@ async def _save(session: AsyncSession, candidate: Candidate, result: dict[str, o
         created_at=datetime.now(UTC),
     )
     session.add(row)
-    await session.flush()
     for name in COMPONENT_ORDER:
         value = scores.get(name) if isinstance(scores, dict) else None
-        row.component_scores.append(
+        session.add(
             AssessmentComponentScore(
                 id=uuid.uuid4(),
                 assessment_id=row.id,
@@ -291,12 +299,12 @@ async def _save(session: AsyncSession, candidate: Candidate, result: dict[str, o
             )
         )
     for sequence, text in enumerate(_strings(result.get("strengths"))):
-        row.strengths.append(AssessmentStrength(id=uuid.uuid4(), assessment_id=row.id, sequence=sequence, text=text))
+        session.add(AssessmentStrength(id=uuid.uuid4(), assessment_id=row.id, sequence=sequence, text=text))
     for sequence, text in enumerate(_strings(result.get("weaknesses"))):
-        row.weaknesses.append(AssessmentWeakness(id=uuid.uuid4(), assessment_id=row.id, sequence=sequence, text=text))
+        session.add(AssessmentWeakness(id=uuid.uuid4(), assessment_id=row.id, sequence=sequence, text=text))
     sequence = 0
     for item in _trace_items(result.get("traceability")):
-        row.evidence_links.append(
+        session.add(
             EvidenceLink(
                 id=uuid.uuid4(),
                 assessment_id=row.id,
@@ -309,7 +317,7 @@ async def _save(session: AsyncSession, candidate: Candidate, result: dict[str, o
         )
         sequence += 1
     for gap in _strings(result.get("evidence_gaps")):
-        row.evidence_links.append(
+        session.add(
             EvidenceLink(
                 id=uuid.uuid4(),
                 assessment_id=row.id,
@@ -483,3 +491,58 @@ def _cell(value: float | None) -> str:
     if value is None:
         return "—"
     return f"{value:.1f}"
+
+
+_assessment_running: set[uuid.UUID] = set()
+_assessment_failed: dict[uuid.UUID, str] = {}
+
+
+def claim_assessment_run(candidate_id: uuid.UUID) -> bool:
+    """One build per candidate. A second click waits on the build already running."""
+    if candidate_id in _assessment_running:
+        return False
+    _assessment_failed.pop(candidate_id, None)
+    _assessment_running.add(candidate_id)
+    return True
+
+
+def finish_assessment_run(candidate_id: uuid.UUID, message: str | None) -> None:
+    if message:
+        _assessment_failed[candidate_id] = message
+    else:
+        _assessment_failed.pop(candidate_id, None)
+    _assessment_running.discard(candidate_id)
+
+
+def assessment_wait_error(candidate_id: uuid.UUID) -> AssessmentError | None:
+    if candidate_id in _assessment_running:
+        return AssessmentError("ASSESSMENT_PENDING", "The master assessment is still being written.", 404)
+    message = _assessment_failed.get(candidate_id)
+    if message:
+        return AssessmentError("ASSESSMENT_FAILED", message, 409)
+    return None
+
+
+def apply_assessment_run(candidate_id: uuid.UUID, report: AssessmentRead) -> AssessmentRead:
+    if candidate_id in _assessment_running:
+        return report.model_copy(update={"run_state": "running", "run_message": ""})
+    message = _assessment_failed.get(candidate_id)
+    if message:
+        return report.model_copy(update={"run_state": "failed", "run_message": message})
+    return report.model_copy(update={"run_state": "idle", "run_message": ""})
+
+
+async def run_assessment_job(llm: FallbackLLMManager, candidate_id: uuid.UUID) -> None:
+    """Build the report after the HTTP response has already returned."""
+    from app.core.database import SessionFactory
+
+    message: str | None = None
+    try:
+        async with SessionFactory() as session:
+            await build_consolidated_assessment(session, llm, candidate_id)
+    except AssessmentError as exc:
+        message = exc.message
+    except Exception:
+        message = "The master assessment could not be built."
+    finally:
+        finish_assessment_run(candidate_id, message)

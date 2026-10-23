@@ -112,6 +112,27 @@ def test_invented_denial_is_downgraded_when_the_skill_was_mentioned() -> None:
     assert flag.follow_up.endswith("?")
 
 
+def _docker() -> CvClaimDraft:
+    return CvClaimDraft(
+        claim_id="S02",
+        kind="skill",
+        statement="The CV lists Docker.",
+        subject="Docker",
+        cv_quote="Docker",
+    )
+
+
+def test_packaged_docker_sentence_is_supported() -> None:
+    flag = reconcile_claim(
+        _docker(),
+        "",
+        "",
+        "I packaged the service with Docker, and that Docker image is what we run in production.",
+    )
+    assert flag.status == "supported"
+    assert flag.follow_up == ""
+
+
 def test_concrete_example_is_supported_and_not_a_prompt() -> None:
     flag = reconcile_claim(
         _skill(),

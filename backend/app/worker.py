@@ -6,7 +6,6 @@ from app.core.database import SessionFactory
 from app.core.llm_fallback import create_fallback_manager
 from app.services.email_worker import ingest_inbox
 from app.services.embeddings import create_embedder
-from app.services.invites import SmtpInviteSender
 from app.services.gmail_mailbox import mailbox_from_settings
 
 logger = logging.getLogger(__name__)
@@ -17,7 +16,6 @@ async def poll_forever() -> None:
     llm = create_fallback_manager()
     embedder = create_embedder()
     mailbox = mailbox_from_settings(settings)
-    sender = SmtpInviteSender(settings)
     while True:
         try:
             async with SessionFactory() as session:
@@ -27,7 +25,6 @@ async def poll_forever() -> None:
                     llm=llm,
                     embedder=embedder,
                     mailbox=mailbox,
-                    sender=sender,
                 )
             if processed:
                 logger.info("inbox_processed count=%s", processed)

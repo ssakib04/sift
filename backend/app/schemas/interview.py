@@ -144,6 +144,10 @@ class JustificationRead(BaseModel):
     citation: str
 
 
+class AnalysisRunRead(BaseModel):
+    state: str
+
+
 class AnalysisRead(BaseModel):
     relevance: float
     technical_accuracy: float

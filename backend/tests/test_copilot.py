@@ -344,7 +344,7 @@ def test_inbox_check_is_a_confirmation() -> None:
     offered = offer_inbox_turn()
     assert offered.chips[0].confirm == "inbox"
     assert offered.navigation is None
-    assert "top 3" in offered.message
+    assert "choose who to invite" in offered.message
 
 
 def test_practice_turn_carries_the_guest_link_and_the_room() -> None:

@@ -5,7 +5,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import desc, nulls_last, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -70,6 +70,9 @@ _VERBS = {
     "delivered",
     "created",
     "developed",
+    "packaged",
+    "operated",
+    "supported",
 }
 _STOP = {
     "a",
@@ -345,12 +348,13 @@ async def build_claim_verification(
 ) -> ClaimVerificationRead:
     if await db.get(Candidate, candidate_id) is None:
         raise ClaimError("CANDIDATE_NOT_FOUND", "Candidate not found.", 404)
-    interview = await db.scalar(select(InterviewSession).where(InterviewSession.candidate_id == candidate_id))
+    interview = await db.scalar(_latest_interview(candidate_id))
     if interview is None or interview.status != "ended":
         raise ClaimError("INTERVIEW_NOT_ENDED", "CV claim checks run after the interview ends.", 409)
     existing = await _verification(db, candidate_id)
     if existing is not None:
-        return _to_read(candidate_id, existing)
+        await db.delete(existing)
+        await db.flush()
     result = await db.scalars(
         select(TranscriptSegment)
         .where(TranscriptSegment.session_id == interview.id)
@@ -632,8 +636,16 @@ async def _claim_rows(db: AsyncSession, candidate_id: uuid.UUID) -> list[CvClaim
     return list(result.all())
 
 
+def _latest_interview(candidate_id: uuid.UUID):
+    return (
+        select(InterviewSession)
+        .where(InterviewSession.candidate_id == candidate_id)
+        .order_by(nulls_last(desc(InterviewSession.ended_at)), desc(InterviewSession.created_at))
+    )
+
+
 async def _verification(db: AsyncSession, candidate_id: uuid.UUID) -> ClaimVerification | None:
-    interview = await db.scalar(select(InterviewSession).where(InterviewSession.candidate_id == candidate_id))
+    interview = await db.scalar(_latest_interview(candidate_id))
     if interview is None:
         return None
     return await db.scalar(

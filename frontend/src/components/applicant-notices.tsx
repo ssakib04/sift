@@ -53,7 +53,13 @@ export function ApplicantNotices() {
       // The profile is still the right place to go.
     }
     setOpen(false);
-    router.push(`/candidates/${notice.candidate_id}`);
+    if (notice.job_id) {
+      router.push(`/jobs?job=${notice.job_id}&tab=people#people`);
+      return;
+    }
+    if (notice.candidate_id) {
+      router.push(`/candidates/${notice.candidate_id}`);
+    }
   }
 
   if (!ready) {

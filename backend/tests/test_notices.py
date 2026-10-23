@@ -1,5 +1,5 @@
 from app.api.v1.notices import router
-from app.services.notices import notice_message, ordinal
+from app.services.notices import notice_message, ordinal, ranking_notice_message
 
 
 def test_position_uses_an_ordinal_and_names_the_role() -> None:
@@ -24,6 +24,15 @@ def test_an_unplaced_applicant_is_still_announced() -> None:
     assert message == "ada@example.com has applied for Backend Engineer and is waiting to be placed."
     assert "score" not in message.casefold()
     assert "rank" not in message.casefold()
+
+
+def test_a_finished_batch_asks_the_recruiter_to_choose_invites() -> None:
+    message = ranking_notice_message(job_title="Backend Engineer", scored=20, unreadable=0)
+    assert message == "20 CVs scored for Backend Engineer. Review the ranking and choose who to invite."
+    with_failures = ranking_notice_message(job_title="Backend Engineer", scored=1, unreadable=2)
+    assert with_failures == (
+        "1 CV scored for Backend Engineer. 2 CVs could not be read. Review the ranking and choose who to invite."
+    )
 
 
 def test_notification_routes_are_registered() -> None:

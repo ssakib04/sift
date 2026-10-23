@@ -7,10 +7,12 @@ from app.api.deps import get_llm
 from app.api.v1.auth import require_recruiter
 from app.core.database import get_session
 from app.core.llm_fallback import FallbackLLMManager
-from app.schemas.interview import AnalysisRead, JustificationRead, QAPairRead
+from app.schemas.interview import AnalysisRead, AnalysisRunRead, JustificationRead, QAPairRead
 from app.schemas.interview_quality import InterviewQualityRead
 from app.schemas.interview_score import InterviewHistoryRead, InterviewScoreRead
 from app.services.interview_quality import QualityError, build_interview_quality, read_interview_quality
+from app.services.interview_rules import InterviewError
+from app.services.interview_sessions import request_interview_analysis
 from app.services.interview_score import (
     ScoreError,
     build_interview_score,
@@ -22,7 +24,7 @@ from app.services.interview_score import (
 router = APIRouter(dependencies=[Depends(require_recruiter)])
 
 
-def _http(exc: ScoreError | QualityError) -> HTTPException:
+def _http(exc: ScoreError | QualityError | InterviewError) -> HTTPException:
     return HTTPException(status_code=exc.status_code, detail={"error_code": exc.code, "message": exc.message})
 
 
@@ -65,6 +67,19 @@ async def create_quality(candidate_id: UUID, session: AsyncSession = Depends(get
         return await build_interview_quality(session, candidate_id)
     except QualityError as exc:
         raise _http(exc) from exc
+
+
+@router.post("/candidates/{candidate_id}/interview-analysis", response_model=AnalysisRunRead)
+async def create_analysis(
+    candidate_id: UUID,
+    session: AsyncSession = Depends(get_session),
+    llm: FallbackLLMManager = Depends(get_llm),
+) -> AnalysisRunRead:
+    try:
+        state = await request_interview_analysis(session, llm, candidate_id)
+    except InterviewError as exc:
+        raise _http(exc) from exc
+    return AnalysisRunRead(state=state)
 
 
 @router.get("/candidates/{candidate_id}/interview-analysis", response_model=AnalysisRead)

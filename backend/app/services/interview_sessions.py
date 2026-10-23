@@ -517,12 +517,34 @@ async def _save_analysis(db: AsyncSession, row: InterviewSession, draft: Analysi
 
 
 _analysis_tasks: set[asyncio.Task[None]] = set()
+_analysis_inflight: set[uuid.UUID] = set()
 
 
 def _schedule_analysis(session_id: uuid.UUID, llm: FallbackLLMManager) -> None:
+    if session_id in _analysis_inflight:
+        return
+    _analysis_inflight.add(session_id)
     task = asyncio.create_task(_analyze_after_end(session_id, llm))
     _analysis_tasks.add(task)
     task.add_done_callback(_analysis_tasks.discard)
+    task.add_done_callback(lambda _task, sid=session_id: _analysis_inflight.discard(sid))
+
+
+async def request_interview_analysis(db: AsyncSession, llm: FallbackLLMManager, candidate_id: uuid.UUID) -> str:
+    """Ask for the Q&A report again. A report that already exists is left as it is."""
+    interview = await db.scalar(
+        select(InterviewSession)
+        .where(InterviewSession.candidate_id == candidate_id)
+        .options(selectinload(InterviewSession.analysis))
+    )
+    if interview is None or interview.ended_at is None:
+        raise InterviewError("SESSION_NOT_FOUND", "End the interview before running the analysis.", 404)
+    if interview.analysis is not None:
+        return "ready"
+    interview.processing_status = "pending"
+    await db.commit()
+    _schedule_analysis(interview.id, llm)
+    return "started"
 
 
 async def _analyze_after_end(session_id: uuid.UUID, llm: FallbackLLMManager) -> None:

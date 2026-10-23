@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import Awaitable, Callable
 
 from langgraph.graph import END, START, StateGraph
@@ -10,6 +11,7 @@ DIMENSIONS = ("relevance", "technical_accuracy", "completeness", "articulation")
 INTENTS = {"technical", "experience", "qualification", "clarification", "other"}
 DISCREPANCY_SPREAD = 3.0
 _TEXT_LIMIT = 1200
+_MODEL_WAIT_SECONDS = 45.0
 
 
 def build_qa_analysis_graph(
@@ -33,11 +35,19 @@ def build_qa_analysis_graph(
             f"intent must be one of: {', '.join(sorted(INTENTS))}.\n"
             f"{_pair_block(pairs)}"
         )
-        response = await llm.complete(prompt, system="You label interview questions. Return only a JSON object.")
-        intents = _intent_map(_payload(response.content))
+        payload, response, failed = await _model_json(
+            llm,
+            prompt,
+            "You label interview questions. Return only a JSON object.",
+        )
+        intents = _intent_map(payload)
         for pair in pairs:
             pair["intent"] = intents.get(str(pair["pair_id"]), "unclassified")
-        return {"pairs": pairs, "tier_notes": [response.tier.value], "fallback_flags": [response.fallback_used]}
+        return {
+            "pairs": pairs,
+            "tier_notes": [response.tier.value if response is not None else "unavailable"],
+            "fallback_flags": [failed or (response.fallback_used if response is not None else True)],
+        }
 
     async def score_dimension(state: QAAnalysisState, dimension: str) -> dict[str, object]:
         pairs = list(state.get("pairs") or [])
@@ -49,14 +59,15 @@ def build_qa_analysis_graph(
             f"Checklist:\n{_checklist_block(state.get('checklist') or [])}\n\n"
             f"{_pair_block(pairs)}"
         )
-        response = await llm.complete(
+        payload, response, failed = await _model_json(
+            llm,
             prompt,
-            system="You score one interview dimension for each answer. Return only a JSON object.",
+            "You score one interview dimension for each answer. Return only a JSON object.",
         )
         return {
-            f"{dimension}_by_pair": scores_for(pairs, _payload(response.content)),
-            "tier_notes": [response.tier.value],
-            "fallback_flags": [response.fallback_used],
+            f"{dimension}_by_pair": scores_for(pairs, payload),
+            "tier_notes": [response.tier.value if response is not None else "unavailable"],
+            "fallback_flags": [failed or (response.fallback_used if response is not None else True)],
         }
 
     async def evaluate_relevance(state: QAAnalysisState) -> dict[str, object]:
@@ -84,11 +95,19 @@ def build_qa_analysis_graph(
             f"Checklist:\n{_checklist_block(state.get('checklist') or [])}\n\n"
             f"{_pair_block(pairs)}"
         )
-        response = await llm.complete(prompt, system="You map answers to checklist ids. Return only a JSON object.")
-        mapped = _query_map(_payload(response.content), set(allowed))
+        payload, response, failed = await _model_json(
+            llm,
+            prompt,
+            "You map answers to checklist ids. Return only a JSON object.",
+        )
+        mapped = _query_map(payload, set(allowed))
         for pair in pairs:
             pair["query_ids"] = mapped.get(str(pair["pair_id"]), [])
-        return {"pairs": pairs, "tier_notes": [response.tier.value], "fallback_flags": [response.fallback_used]}
+        return {
+            "pairs": pairs,
+            "tier_notes": [response.tier.value if response is not None else "unavailable"],
+            "fallback_flags": [failed or (response.fallback_used if response is not None else True)],
+        }
 
     async def identify_coverage_gaps(state: QAAnalysisState) -> dict[str, object]:
         pairs = list(state.get("pairs") or [])
@@ -107,16 +126,17 @@ def build_qa_analysis_graph(
             f"Discrepancies:\n" + "\n".join(f"- {item}" for item in state.get("discrepancies") or []) + "\n"
             f"{_scored_block(pairs)}"
         )
-        response = await llm.complete(
+        payload, response, failed = await _model_json(
+            llm,
             prompt,
-            system="You justify interview scores with transcript citations. Return only a JSON object.",
+            "You justify interview scores with transcript citations. Return only a JSON object.",
         )
-        summary, claims = _justification(_payload(response.content), pairs)
+        summary, claims = _justification(payload, pairs)
         return {
             "summary": summary,
             "justifications": claims,
-            "tier_notes": [response.tier.value],
-            "fallback_flags": [response.fallback_used],
+            "tier_notes": [response.tier.value if response is not None else "unavailable"],
+            "fallback_flags": [failed or (response.fallback_used if response is not None else True)],
         }
 
     async def persist_qa_analysis(state: QAAnalysisState) -> dict[str, object]:
@@ -429,6 +449,15 @@ def _fallback_summary(pairs: list[dict[str, object]]) -> str:
     if not pairs:
         return "No question and answer pairs were captured."
     return f"The interview produced {len(pairs)} question and answer pairs."
+
+
+async def _model_json(llm: FallbackLLMManager, prompt: str, system: str) -> tuple[dict[str, object], object | None, bool]:
+    """One model reply. A stall or a bad reply becomes an empty object so the report can still be saved."""
+    try:
+        response = await asyncio.wait_for(llm.complete(prompt, system=system), timeout=_MODEL_WAIT_SECONDS)
+    except Exception:
+        return {}, None, True
+    return _payload(response.content), response, False
 
 
 def _payload(text: str) -> dict[str, object]:

@@ -465,7 +465,7 @@ def offer_approve_from_records(jobs: list[NamedJob], query: str) -> CopilotTurnR
 
 def offer_inbox_turn() -> CopilotTurnResponse:
     return CopilotTurnResponse(
-        message="Check the apply mailbox? Unread CVs are scored, and anyone who newly enters the top 3 can be invited.",
+        message="Check the apply mailbox? Unread CVs are scored. You choose who to invite from the ranking.",
         chips=[CopilotChip(label="Check inbox", kind="confirm", confirm="inbox")],
     )
 
