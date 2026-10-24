@@ -135,6 +135,32 @@ def test_cv_and_interview_inputs_keep_their_citations() -> None:
     assert _qa_input(None) is None
 
 
+def test_a_contradiction_flag_is_written_for_the_assessment() -> None:
+    from types import SimpleNamespace
+
+    from app.services.assessment import contradiction_lines
+
+    candidate = SimpleNamespace(
+        interview_session=SimpleNamespace(
+            claim_verification=SimpleNamespace(
+                flags=[
+                    SimpleNamespace(sequence=1, status="supported", cv_quote="Python", interview_quote="Python"),
+                    SimpleNamespace(
+                        sequence=2,
+                        status="contradiction",
+                        cv_quote="Harbor Ledger",
+                        interview_quote="Northwind",
+                    ),
+                ]
+            )
+        )
+    )
+    lines = contradiction_lines(candidate)  # type: ignore[arg-type]
+    assert lines == [
+        'The interview disagrees with the CV. The CV says "Harbor Ledger". The interview says "Northwind".'
+    ]
+
+
 def test_key_gap_prefers_a_missing_input_over_a_weakness() -> None:
     assert key_gap_text([], [], assessed=False) == "Not assessed"
     assert key_gap_text(["Tool Calling (MCP)"], ["Thin Docker answer."], assessed=True) == "Tool Calling (MCP)"

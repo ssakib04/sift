@@ -316,6 +316,32 @@ async def checklist_questions(db: AsyncSession, version_id: uuid.UUID) -> list[s
     return await _questions(db, version_id)
 
 
+async def speech_keyterms(session_id: str) -> list[str]:
+    """Checklist tools and names from this candidate's CV, for the live transcriber."""
+    try:
+        interview_id = uuid.UUID(session_id)
+    except ValueError:
+        return []
+    from app.core.database import SessionFactory
+    from app.services.local_speech import speech_hints
+
+    async with SessionFactory() as db:
+        row = await db.scalar(
+            select(InterviewSession)
+            .where(InterviewSession.id == interview_id)
+            .options(selectinload(InterviewSession.candidate))
+        )
+        if row is None or row.candidate is None:
+            return []
+        questions = await checklist_questions(db, row.job_version_id)
+        parse = await db.scalar(
+            select(CandidateParseResult).where(CandidateParseResult.candidate_id == row.candidate.id)
+        )
+        raw = parse.raw_text if parse is not None and parse.status == "parsed" else ""
+        profile = cv_profile_text(row.candidate.full_name, raw)
+        return speech_hints(questions, profile)
+
+
 async def close_interview_from_agent(session_id: str) -> None:
     """End the call after the AI interviewer has asked its questions, then score the transcript."""
     try:

@@ -131,6 +131,7 @@ def build_master_assessment_graph(
         narrative = str(_payload(response.content).get("narrative") or "").strip()
         if not narrative_cites(narrative, references):
             narrative = fallback
+        narrative = _state_contradictions(narrative, _contradiction_notes(qa.get("contradictions") if isinstance(qa, dict) else None))
         return {
             "narrative": _clip(narrative, _NARRATIVE_LIMIT),
             "tier_notes": [response.tier.value],
@@ -254,6 +255,7 @@ def normalize_qa(raw: object) -> dict[str, object] | None:
         "articulation": _float(raw.get("articulation")),
         "gaps": [str(item).strip() for item in gaps if str(item).strip()] if isinstance(gaps, list) else [],
         "pairs": pairs,
+        "contradictions": _contradiction_notes(raw.get("contradictions")),
     }
 
 
@@ -351,6 +353,8 @@ def evidence_catalog(cv: dict[str, object] | None, qa: dict[str, object] | None)
                 answer = str(item.get("answer") or "").strip()
                 if citation and answer:
                     catalog.setdefault(("transcript", citation), answer)
+        for index, note in enumerate(_contradiction_notes(qa.get("contradictions")), start=1):
+            catalog[("interview", f"CV contradiction {index}")] = note
     return catalog
 
 
@@ -386,7 +390,28 @@ def evidence_gaps_for(cv: dict[str, object] | None, mcq: int | None, qa: dict[st
             citation = str(item.get("citation") or "").strip()
             pair_id = str(item.get("pair_id") or "answer")
             gaps.append(f"No answer recorded at {citation}." if citation else f"No answer recorded for {pair_id}.")
+    for note in _contradiction_notes(qa.get("contradictions")):
+        if note not in gaps:
+            gaps.append(note)
     return gaps
+
+
+def _contradiction_notes(raw: object) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+    notes: list[str] = []
+    for item in raw:
+        text = " ".join(str(item).split())
+        if text and text not in notes:
+            notes.append(text)
+    return notes
+
+
+def _state_contradictions(narrative: str, notes: list[str]) -> str:
+    missing = [note for note in notes if note not in narrative]
+    if not missing:
+        return narrative
+    return f"{narrative.rstrip()} {' '.join(missing)}".strip()
 
 
 def accept_citations(raw: object, catalog: dict[tuple[str, str], str]) -> list[dict[str, str]]:

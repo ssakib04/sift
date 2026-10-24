@@ -21,6 +21,7 @@ from app.models.candidate import (
 )
 from app.models.job import JobChecklistQuery
 from app.schemas.interview_quality import InterviewQualityRead, QualityDimensionRead, QualityRecommendationRead
+from app.services.interview_score import question_covered
 
 DIMENSIONS: tuple[tuple[str, str], ...] = (
     ("question_effectiveness", "Question effectiveness"),
@@ -147,7 +148,11 @@ def assess_interview(
 ) -> QualityDraft:
     """Review the interview process and recommend what to change next time."""
     speech = _candidate_text(turns)
-    asked = [item for item in (pairs if pairs else _questions_from_turns(turns)) if not _audio_check(item.question)]
+    asked = [
+        item
+        for item in (pairs if pairs else _questions_from_turns(turns))
+        if not _audio_check(item.question) and _reportable(item, checklist)
+    ]
     interviewer_share, candidate_share = _shares(turns)
     covered = _covered_ids(checklist, speech, asked)
     questions, low_signal = _question_review(asked)
@@ -363,8 +368,11 @@ def _questions_from_turns(turns: list[QualityTurn]) -> list[AnsweredQuestion]:
         if not text:
             continue
         if turn.speaker == "recruiter":
-            if question is not None or answer:
+            if answer:
                 flush()
+            if question:
+                question = f"{question} {text}"
+                continue
             question = text
             continue
         if turn.speaker == "candidate":
@@ -412,12 +420,14 @@ def _balance(candidate_share: float) -> float:
     return _points(100 * (1 - candidate_share) / 0.25)
 
 
+def _reportable(item: AnsweredQuestion, checklist: list[ChecklistTopic]) -> bool:
+    if item.answer.strip():
+        return True
+    return any(question_covered(topic.question, item.question) for topic in checklist)
+
+
 def _covered(question: str, speech: str) -> bool:
-    words = set(_content(question))
-    if not words:
-        return False
-    need = 1 if len(words) == 1 else 2
-    return len(words & set(_content(speech))) >= need
+    return question_covered(question, speech)
 
 
 def _candidate_text(turns: list[QualityTurn]) -> str:

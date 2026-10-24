@@ -14,6 +14,7 @@ from app.graphs.master_assessment_graph import (
     interview_points,
     narrative_cites,
     normalize_mcq,
+    normalize_qa,
     weighted_overall,
 )
 
@@ -132,6 +133,30 @@ def test_missing_inputs_are_gaps_and_block_the_overall_score() -> None:
         "Submitted MCQ score is not available.",
         "Interview Q&A analysis is not available.",
     ]
+
+
+def test_a_cv_contradiction_is_an_evidence_gap() -> None:
+    note = 'The interview disagrees with the CV. The CV says "Harbor Ledger". The interview says "Northwind".'
+    qa = {
+        "relevance": 8,
+        "technical_accuracy": 8,
+        "completeness": 8,
+        "articulation": 8,
+        "gaps": [],
+        "pairs": [
+            {
+                "pair_id": "QA_01",
+                "citation": "Transcript turn 1.0-2.0",
+                "answer": "I work at Northwind.",
+            }
+        ],
+        "contradictions": [note],
+    }
+    gaps = evidence_gaps_for({"aggregate_score": 1, "evaluations": []}, 80, qa)
+    assert note in gaps
+    kept = normalize_qa(qa)
+    assert kept is not None
+    assert kept["contradictions"] == [note]
 
 
 @pytest.mark.asyncio

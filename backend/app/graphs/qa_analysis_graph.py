@@ -250,8 +250,12 @@ def segment_turns(turns: list[dict[str, object]]) -> list[dict[str, object]]:
         if not text:
             continue
         if speaker == "recruiter":
-            if question is not None or answer_parts:
+            if answer_parts:
                 flush()
+            if question:
+                question = f"{question} {text}"
+                question_end = float(turn["end"])
+                continue
             question = text
             question_start = float(turn["start"])
             question_end = float(turn["end"])
@@ -328,10 +332,11 @@ def uncovered_gaps(checklist: list[dict[str, str]], pairs: list[dict[str, object
 
 
 def mean_dimension(pairs: list[dict[str, object]], dimension: str) -> float:
-    if not pairs:
+    answered = [pair for pair in pairs if str(pair.get("answer") or "").strip()]
+    if not answered:
         return 0.0
-    total = sum(float(pair.get(dimension) or 0.0) for pair in pairs)
-    return round(total / len(pairs), 1)
+    total = sum(float(pair.get(dimension) or 0.0) for pair in answered)
+    return round(total / len(answered), 1)
 
 
 def fallback_claims(pairs: list[dict[str, object]]) -> list[dict[str, str]]:

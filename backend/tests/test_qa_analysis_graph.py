@@ -7,6 +7,7 @@ from app.graphs.qa_analysis_graph import (
     _justification,
     apply_dimension_scores,
     find_discrepancies,
+    mean_dimension,
     segment_turns,
     uncovered_gaps,
 )
@@ -83,6 +84,28 @@ def test_segment_pairs_a_question_with_the_following_answer() -> None:
     assert pairs[1]["citation"] == "Transcript turn 2.5-4.0"
     assert pairs[2]["answer"] == ""
     assert pairs[2]["citation"] == "Transcript turn 5.0-6.0"
+
+
+def test_a_follow_up_before_the_answer_stays_one_question() -> None:
+    pairs = segment_turns(
+        [
+            {"speaker": "recruiter", "start": 1.0, "end": 2.0, "text": "How have you used FastAPI?"},
+            {"speaker": "recruiter", "start": 2.0, "end": 3.0, "text": "What do you use to build those services?"},
+            {"speaker": "candidate", "start": 3.5, "end": 5.0, "text": "I build the backend in Python."},
+        ]
+    )
+    assert len(pairs) == 1
+    assert pairs[0]["question"] == "How have you used FastAPI? What do you use to build those services?"
+    assert pairs[0]["answer"] == "I build the backend in Python."
+
+
+def test_headline_scores_ignore_blank_answers() -> None:
+    pairs = [
+        {"answer": "I shipped a FastAPI service.", "relevance": 10},
+        {"answer": "   ", "relevance": 0},
+    ]
+    assert mean_dimension(pairs, "relevance") == 10.0
+    assert mean_dimension([{"answer": "", "relevance": 0}], "relevance") == 0.0
 
 
 def test_discrepancies_and_gaps_use_the_pair_scores() -> None:

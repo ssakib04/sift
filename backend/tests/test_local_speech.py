@@ -15,6 +15,7 @@ from app.services.local_speech import (
     pcm_from_chunks,
     resample_linear,
     split_pcm16,
+    speech_hints,
     trim_trailing_silence,
     voice_paths,
 )
@@ -26,6 +27,16 @@ def _tone(samples: int, rate: int, amplitude: float) -> bytes:
         value = int(amplitude * 32767 * math.sin(2 * math.pi * 440 * index / rate))
         pcm += struct.pack("<h", value)
     return bytes(pcm)
+
+
+def test_speech_hints_keep_checklist_tools_and_cv_names() -> None:
+    hints = speech_hints(
+        ["Does the candidate have experience working with PostgreSQL databases?"],
+        "Kazi Rafiul Kader\nHarbor Ledger\nBackend engineer in Dhaka",
+    )
+    assert "PostgreSQL" in hints
+    assert "Dhaka" in hints
+    assert "Harbor Ledger" in hints
 
 
 def test_livekit_audio_kind_is_the_integer_one() -> None:

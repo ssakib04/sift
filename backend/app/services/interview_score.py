@@ -31,6 +31,14 @@ DIMENSIONS: tuple[tuple[str, str], ...] = (
     ("experience_depth", "Depth of experience"),
     ("job_alignment", "Alignment with job requirements"),
 )
+DIMENSION_WEIGHTS: dict[str, float] = {
+    "technical_competency": 0.24,
+    "job_alignment": 0.22,
+    "experience_depth": 0.18,
+    "communication": 0.14,
+    "relevance": 0.12,
+    "problem_solving": 0.10,
+}
 _TOKEN = re.compile(r"[A-Za-z0-9+#]+(?:[./-][A-Za-z0-9+#]+)*")
 _SENTENCE = re.compile(r"[^.!?]+(?:[.!?]|$)")
 _EXAMPLE = re.compile(
@@ -173,7 +181,7 @@ def score_interview(
             if ok and snippet and len(_tokens(snippet)) >= 6:
                 kept = snippet
         dimensions.append(DimensionDraft(key=key, label=label, score=score, evidence=kept, note=note))
-    overall = round(sum(item.score for item in dimensions) / len(dimensions), 1)
+    overall = _weighted_overall(dimensions)
     return PerformanceDraft(
         overall_score=overall,
         summary=f"Interview performance is {overall:.1f} out of 100. This score uses only the interview.",
@@ -447,12 +455,67 @@ def _alignment(speech: str, checklist: list[ChecklistTopic]) -> tuple[float, str
     )
 
 
-def _covered(question: str, speech: str) -> bool:
-    words = set(_content(question))
-    if not words:
+_ALIAS = {
+    "postgres": "postgresql",
+    "postgresql": "postgresql",
+    "apis": "api",
+    "api": "api",
+    "bachelor": "degree",
+    "bachelors": "degree",
+    "bsc": "degree",
+    "degree": "degree",
+}
+_FRAME = {
+    "candidate",
+    "possess",
+    "possesses",
+    "experience",
+    "experienced",
+    "working",
+    "using",
+    "demonstrate",
+    "proficiency",
+    "practical",
+    "required",
+    "requirement",
+    "requirements",
+}
+
+
+def question_covered(question: str, speech: str) -> bool:
+    """A checklist line is covered when its distinctive words, or a close spelling, were said."""
+    raw_terms = _content(question)
+    speech_terms = {_canon(token) for token in _content(speech)}
+    distinctive = [_canon(token) for token in raw_terms if token not in _FRAME]
+    targets = list(dict.fromkeys(distinctive or [_canon(token) for token in raw_terms]))
+    if not targets:
         return False
-    need = 1 if len(words) == 1 else 2
-    return len(words & set(_content(speech))) >= need
+    hits = {token for token in targets if token in speech_terms}
+    need = 1 if len(targets) == 1 else 2
+    return len(hits) >= need
+
+
+def _canon(token: str) -> str:
+    folded = token.casefold().replace("'", "")
+    if folded in _ALIAS:
+        return _ALIAS[folded]
+    if folded.endswith("s") and len(folded) > 4:
+        stem = folded[:-1]
+        if stem in _ALIAS:
+            return _ALIAS[stem]
+        return stem
+    return folded
+
+
+def _covered(question: str, speech: str) -> bool:
+    return question_covered(question, speech)
+
+
+def _weighted_overall(dimensions: list[DimensionDraft]) -> float:
+    if not dimensions or all(item.score == 0.0 for item in dimensions):
+        return 0.0
+    total = sum(item.score * DIMENSION_WEIGHTS[item.key] for item in dimensions)
+    return round(total, 1)
 
 
 def _problem_categories(speech: str) -> set[str]:
@@ -484,8 +547,11 @@ def _pairs(turns: list[SpeechTurn]) -> list[tuple[str, str]]:
         if not text:
             continue
         if turn.speaker == "recruiter":
-            if question is not None or answer:
+            if answer:
                 flush()
+            if question:
+                question = f"{question} {text}"
+                continue
             question = text
             continue
         if turn.speaker == "candidate":
@@ -519,7 +585,12 @@ def _best_sentence(speech: str, wanted: set[str]) -> str:
 
 
 def _sentence_with(speech: str, wanted: set[str]) -> str:
-    hits = [sentence for sentence in _sentences(speech) if set(_tokens(sentence)) & wanted]
+    wanted_terms = {_canon(token) for token in wanted}
+    hits = [
+        sentence
+        for sentence in _sentences(speech)
+        if {_canon(token) for token in _tokens(sentence)} & wanted_terms
+    ]
     if not hits:
         return ""
     return max(hits, key=lambda sentence: (len(set(_tokens(sentence)) & wanted), len(_tokens(sentence))))

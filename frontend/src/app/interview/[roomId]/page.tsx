@@ -9,7 +9,6 @@ import { InCallCopilot } from "@/components/interview/in-call-copilot";
 import { LiveTranscript } from "@/components/interview/live-transcript";
 import { McqQuizModal } from "@/components/interview/mcq-quiz-modal";
 import { VideoRoom } from "@/components/interview/video-room";
-import { Atmosphere } from "@/components/ui/atmosphere";
 import {
   CopilotAnswer,
   IdentificationAck,
@@ -318,8 +317,7 @@ export default function InterviewPage() {
   }
 
   return (
-    <div className="fixed inset-0 flex flex-col overflow-hidden text-ivory">
-      <Atmosphere />
+    <div className="fixed inset-0 flex flex-col overflow-hidden bg-night text-ivory">
       <header className="relative flex h-12 shrink-0 items-center gap-4 border-b border-ivory/10 bg-night/35 px-4 backdrop-blur-md">
         {role === "recruiter" ? (
           <Link href="/candidates" className="text-sm text-mist hover:text-ivory">

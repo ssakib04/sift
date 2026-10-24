@@ -81,6 +81,20 @@ def test_a_low_answer_score_is_little_signal_even_when_the_answer_is_long() -> N
     assert any("FastAPI" in item.text and item.kind == "low_signal" for item in draft.recommendations)
 
 
+def test_an_unanswered_fragment_is_not_coached() -> None:
+    draft = assess_interview(
+        [
+            *TURNS[:2],
+            QualityTurn("recruiter", 40, 44, "So there is a pen"),
+            QualityTurn("recruiter", 44, 48, "Hello, I am interviewing you for the MinLab."),
+        ],
+        [FASTAPI],
+    )
+    text = " ".join(item.text for item in draft.recommendations)
+    assert "pen" not in text.casefold()
+    assert "MinLab" not in text
+
+
 def test_an_audio_check_is_not_treated_as_a_weak_interview_question() -> None:
     draft = assess_interview(
         [

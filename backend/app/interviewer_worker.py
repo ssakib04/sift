@@ -38,6 +38,7 @@ from app.services.local_speech import (
     BargeMeter,
     PiperSynthesizer,
     SpeechGate,
+    speech_prompt,
     WhisperRecognizer,
     ensure_piper_voice,
     float_to_pcm16,
@@ -197,6 +198,7 @@ async def conduct(ctx: JobContext) -> None:
         return
     await _publish(ctx, {"type": "avatar"}, topic="interview", identities=["candidate"])
     recognizer, synthesizer = await asyncio.to_thread(speech_engines)
+    recognizer.prompt = speech_prompt(list(brief.questions), brief.profile)
     hello = opening_line(brief.company_name, brief.job_title, brief.candidate_name)
     agenda = Agenda(questions=brief.questions)
     lines = [f"recruiter: {hello}"]

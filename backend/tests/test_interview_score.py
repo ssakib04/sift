@@ -6,11 +6,13 @@ from app.api.v1.interview_reports import router
 from app.core.llm_fallback import FallbackLLMManager
 from app.services.interview_score import (
     DIMENSIONS,
+    DIMENSION_WEIGHTS,
     ChecklistTopic,
     PerformanceDraft,
     SpeechTurn,
     conductor_label,
     draft_interview_score,
+    question_covered,
     score_interview,
 )
 
@@ -68,7 +70,8 @@ def test_interview_score_breaks_down_the_six_dimensions() -> None:
         "experience_depth": 15.0,
         "job_alignment": 50.0,
     }
-    assert draft.overall_score == round(sum(scores.values()) / len(scores), 1)
+    assert draft.overall_score == round(sum(scores[key] * DIMENSION_WEIGHTS[key] for key in scores), 1)
+    assert abs(sum(DIMENSION_WEIGHTS.values()) - 1.0) < 1e-9
     speech = " ".join(turn.text for turn in TURNS if turn.speaker == "candidate")
     for item in draft.dimensions:
         assert item.evidence
@@ -77,6 +80,20 @@ def test_interview_score_breaks_down_the_six_dimensions() -> None:
     assert "FastAPI" in technical.evidence
     solving = next(item for item in draft.dimensions if item.key == "problem_solving")
     assert "because" in solving.evidence
+
+
+def test_close_spellings_cover_the_checklist_word() -> None:
+    postgres = "The billing data lives in Postgres. I query that database every weekday."
+    assert question_covered("Does the candidate have experience working with PostgreSQL databases?", postgres)
+    assert question_covered(
+        "Does the candidate possess a bachelor's degree?",
+        "I have a Bachelor of Science in Computer Science.",
+    )
+    assert question_covered("Has the candidate built APIs using FastAPI?", "I build APIs using FastAPI.")
+    assert not question_covered(
+        "Does the candidate have experience working with PostgreSQL databases?",
+        "I have experience working with Python.",
+    )
 
 
 def test_a_specific_example_raises_experience_depth() -> None:

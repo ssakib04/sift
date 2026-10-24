@@ -1,4 +1,5 @@
 import array
+import re
 import struct
 import sys
 from collections.abc import Iterable
@@ -311,6 +312,7 @@ class WhisperRecognizer:
 
         compute = "int8" if device == "cpu" else "float16"
         self._model = WhisperModel(model_name, device=device, compute_type=compute, download_root=download_root)
+        self.prompt = ""
 
     def transcribe(self, pcm: bytes, sample_rate: int) -> str:
         import numpy as np
@@ -318,12 +320,54 @@ class WhisperRecognizer:
         samples = pcm16_to_float(trim_trailing_silence(pcm, sample_rate))
         if sample_rate != 16000:
             samples = resample_linear(samples, sample_rate, 16000)
+        prompt = self.prompt.strip()
         segments, _info = self._model.transcribe(
             np.asarray(samples, dtype=np.float32),
             language="en",
             vad_filter=True,
-            beam_size=1,
+            beam_size=5,
             best_of=1,
             condition_on_previous_text=False,
+            initial_prompt=prompt or None,
+            hotwords=prompt or None,
         )
         return join_segment_text(segments)
+
+
+_HINT_WORDS = (
+    "Python",
+    "FastAPI",
+    "PostgreSQL",
+    "Postgres",
+    "Docker",
+    "Redis",
+    "React",
+    "Dhaka",
+    "Gulshan",
+)
+_PROPER = re.compile(r"\b[A-Z][A-Za-z0-9+#.]{2,}(?:[ \t]+[A-Z][A-Za-z0-9+#.]{2,}){0,2}\b")
+
+
+def speech_hints(questions: list[str], profile: str, *, limit: int = 40) -> list[str]:
+    """Words the transcriber should prefer: checklist tools and names written on the CV."""
+    blob = "\n".join(questions) + "\n" + profile
+    folded = blob.casefold()
+    found: list[str] = []
+    for word in _HINT_WORDS:
+        if word.casefold() in folded:
+            found.append(word)
+    for match in _PROPER.finditer(profile):
+        phrase = " ".join(match.group(0).split())
+        if phrase.casefold() in {item.casefold() for item in found}:
+            continue
+        found.append(phrase)
+        if len(found) >= limit:
+            break
+    return found[:limit]
+
+
+def speech_prompt(questions: list[str], profile: str) -> str:
+    hints = speech_hints(questions, profile)
+    if not hints:
+        return ""
+    return "Terms: " + ", ".join(hints)

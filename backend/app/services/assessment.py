@@ -20,6 +20,7 @@ from app.models.candidate import (
     AssessmentStrength,
     AssessmentWeakness,
     Candidate,
+    ClaimVerification,
     ConsolidatedAssessment,
     EvidenceLink,
     InterviewAnalysis,
@@ -124,14 +125,35 @@ def inputs_from_candidate(candidate: Candidate) -> dict[str, object]:
     """Load the three stored inputs. An unsubmitted quiz contributes no score."""
     questions = {query.query_id: query.question for query in candidate.version.queries} if candidate.version is not None else {}
     analysis = candidate.interview_session.analysis if candidate.interview_session is not None else None
+    qa = _qa_input(analysis)
+    disagreements = contradiction_lines(candidate)
+    if qa is not None and disagreements:
+        qa["contradictions"] = disagreements
     return {
         "candidate_id": str(candidate.id),
         "cv_screening": _cv_input(candidate.snapshot, questions),
         "mcq_score": _mcq_input(candidate.quiz_attempt),
-        "qa_analysis": _qa_input(analysis),
+        "qa_analysis": qa,
         "tier_notes": [],
         "fallback_flags": [],
     }
+
+
+def contradiction_lines(candidate: Candidate) -> list[str]:
+    """Spoken employers or schools that disagree with the CV, written so the report can quote both."""
+    session = candidate.interview_session
+    verification = session.claim_verification if session is not None else None
+    flags = list(verification.flags) if verification is not None else []
+    lines: list[str] = []
+    for flag in sorted(flags, key=lambda item: item.sequence):
+        if flag.status != "contradiction":
+            continue
+        cv_quote = " ".join(flag.cv_quote.split())
+        spoken = " ".join(flag.interview_quote.split())
+        if not cv_quote or not spoken:
+            continue
+        lines.append(f'The interview disagrees with the CV. The CV says "{cv_quote}". The interview says "{spoken}".')
+    return lines
 
 
 def key_gap_text(gaps: list[str], weaknesses: list[str], *, assessed: bool) -> str:
@@ -339,6 +361,9 @@ def _candidate_loader():
         selectinload(Candidate.snapshot).selectinload(ScoreSnapshot.evaluations),
         selectinload(Candidate.quiz_attempt),
         selectinload(Candidate.interview_session).selectinload(InterviewSession.analysis).selectinload(InterviewAnalysis.pairs),
+        selectinload(Candidate.interview_session)
+        .selectinload(InterviewSession.claim_verification)
+        .selectinload(ClaimVerification.flags),
         selectinload(Candidate.version).selectinload(JobVersion.job),
         selectinload(Candidate.version).selectinload(JobVersion.queries),
         assessment.selectinload(ConsolidatedAssessment.component_scores),

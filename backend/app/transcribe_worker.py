@@ -28,13 +28,23 @@ server = AgentServer()
 
 
 class Transcriber(Agent):
-    def __init__(self, *, participant_identity: str, session_id: str, save: Callable[..., Awaitable[None]]) -> None:
+    def __init__(
+        self,
+        *,
+        participant_identity: str,
+        session_id: str,
+        save: Callable[..., Awaitable[None]],
+        keyterms: list[str] | None = None,
+    ) -> None:
+        extra: dict[str, object] = {"mode": "min_latency"}
+        if keyterms:
+            extra["keyterms_prompt"] = keyterms
         super().__init__(
             instructions="Transcribe the interview. Do not speak.",
             stt=inference.STT(
                 "assemblyai/universal-3-6-pro",
                 language="en",
-                extra_kwargs={"mode": "min_latency"},
+                extra_kwargs=extra,
             ),
         )
         self.participant_identity = participant_identity
@@ -50,8 +60,9 @@ class Transcriber(Agent):
 
 
 class MultiUserTranscriber:
-    def __init__(self, ctx: JobContext) -> None:
+    def __init__(self, ctx: JobContext, *, keyterms: list[str] | None = None) -> None:
         self.ctx = ctx
+        self._keyterms = keyterms or []
         self._sessions: dict[str, AgentSession] = {}
         self._tasks: set[asyncio.Task] = set()
         self._locks: dict[str, asyncio.Lock] = {}
@@ -103,6 +114,7 @@ class MultiUserTranscriber:
                 participant_identity=participant.identity,
                 session_id=self.ctx.room.name,
                 save=self._save,
+                keyterms=self._keyterms,
             ),
             room=self.ctx.room,
             room_options=room_io.RoomOptions(
@@ -157,7 +169,10 @@ class MultiUserTranscriber:
 
 @server.rtc_session(agent_name="sift-transcriber")
 async def entrypoint(ctx: JobContext) -> None:
-    transcriber = MultiUserTranscriber(ctx)
+    from app.services.interview_sessions import speech_keyterms
+
+    terms = await speech_keyterms(ctx.room.name)
+    transcriber = MultiUserTranscriber(ctx, keyterms=terms)
     transcriber.start()
     await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
     for participant in ctx.room.remote_participants.values():
