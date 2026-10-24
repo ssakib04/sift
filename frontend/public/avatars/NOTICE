@@ -1,0 +1,20 @@
+interviewer.glb
+
+Source file: avatars/brunette.glb
+Repository: https://github.com/met4citizen/TalkingHead
+Retrieved: 2026-10-24
+
+The TalkingHead README states that this avatar was created at Ready Player Me
+and is free for non-commercial use under CC BY-NC 4.0:
+https://creativecommons.org/licenses/by-nc/4.0/
+
+It includes separate eye, skin, teeth, hair, and clothing materials, plus the
+Oculus visemes viseme_sil, viseme_PP, viseme_FF, viseme_TH, viseme_DD,
+viseme_kk, viseme_CH, viseme_SS, viseme_nn, viseme_RR, viseme_aa, viseme_E,
+viseme_I, viseme_O, and viseme_U, and the blink and brow shapes the
+lip-sync library drives.
+
+This character is not covered by the MIT license of
+@interviewflowai/talking-avatar. Do not ship it in a paid product.
+Replace this file with a .glb you have a commercial license for. The
+replacement needs those same viseme and eyeBlink morph names.

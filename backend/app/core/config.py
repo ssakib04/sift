@@ -73,7 +73,7 @@ class Settings(BaseSettings):
     whisper_model: str = "base"
     whisper_device: str = "cpu"
     speech_model_dir: str = "data/speech"
-    piper_voice: str = "en_US-lessac-medium"
+    piper_voice: str = "en_GB-cori-medium"
     recruiter_password: str = ""
     api_docs_enabled: bool = False
     interview_duration_minutes: int = 45

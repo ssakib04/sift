@@ -16,6 +16,7 @@ WORKDIR /app
 ENV NODE_ENV=production \
     HOSTNAME=0.0.0.0 \
     PORT=3000
+COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 EXPOSE 3000

@@ -131,7 +131,7 @@ export function Atmosphere() {
       <div
         className={`fixed z-40 flex items-center gap-1 rounded-full border border-white/15 bg-[#120e10]/70 p-1 shadow-[0_12px_30px_rgb(8_4_6/0.35)] backdrop-blur-md ${
           path.startsWith("/interview")
-            ? "bottom-6 left-1/2 -translate-x-1/2"
+            ? "right-4 top-4 lg:right-6 lg:top-6"
             : besideBell
               ? "right-[4.25rem] top-4 lg:right-[4.75rem] lg:top-6"
               : "right-4 top-4 lg:right-6 lg:top-6"

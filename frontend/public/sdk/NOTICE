@@ -1,0 +1,12 @@
+viseme-model.bin
+
+Copied from the published package @interviewflowai/talking-avatar@0.1.3
+(dist/viseme-model.bin) so the browser loads it from this app.
+
+npm license field: MIT
+Author: InterviewFlowAI
+https://github.com/interviewflowai/talking-avatar
+
+The published package does not include a LICENSE file. This notice records
+the license field on the package that supplied the file. The package license
+does not cover the interviewer character in public/avatars/.

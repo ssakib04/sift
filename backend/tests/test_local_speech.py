@@ -80,12 +80,19 @@ def test_speech_gate_returns_audio_after_a_pause() -> None:
     assert pcm16_rms(finished) > 0.05
 
 
-def test_speech_gate_waits_five_seconds_and_keeps_a_long_answer_open() -> None:
-    gate = SpeechGate(sample_rate=1000)
-    assert gate.push(_tone(250, 1000, 0.4)) is None
-    assert gate.push(b"\x00\x00" * 4999) is None
-    assert gate.push(_tone(200, 1000, 0.4)) is None
-    assert gate.push(b"\x00\x00" * 5000) is not None
+def test_a_short_answer_closes_sooner_than_a_story() -> None:
+    short = SpeechGate(sample_rate=1000)
+    assert short.push(_tone(400, 1000, 0.4)) is None
+    assert short.push(b"\x00\x00" * 800) is None
+    assert short.push(b"\x00\x00" * 200) is not None
+
+    story = SpeechGate(sample_rate=1000)
+    assert story.push(_tone(3000, 1000, 0.4)) is None
+    assert story.push(b"\x00\x00" * 1200) is None
+    assert story.wants_hold() is True
+    assert story.wants_hold() is False
+    assert story.push(b"\x00\x00" * 900) is None
+    assert story.push(b"\x00\x00" * 200) is not None
 
     ongoing = SpeechGate(sample_rate=1000)
     for _ in range(4):

@@ -171,7 +171,7 @@ services:
       LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-}
       AI_INTERVIEWER_ENABLED: ${AI_INTERVIEWER_ENABLED:-true}
       SPEECH_MODEL_DIR: /data/speech
-      PIPER_VOICE: ${PIPER_VOICE:-en_US-lessac-medium}
+      PIPER_VOICE: ${PIPER_VOICE:-en_GB-cori-medium}
       WHISPER_MODEL: ${WHISPER_MODEL:-base}
       WHISPER_DEVICE: ${WHISPER_DEVICE:-cpu}
       COMPANY_NAME: ${COMPANY_NAME:-Sift}

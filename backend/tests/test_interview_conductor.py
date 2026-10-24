@@ -2,14 +2,17 @@ import pytest
 
 from app.core.llm_fallback import FallbackLLMManager
 from app.services.interview_conductor import (
+    HOLD_LINE,
     Agenda,
     answer_limit,
     echoes_prompt,
     fallback_utterance,
     first_question,
+    interruption_is_noise,
     note_answer,
     opening_line,
     plan_reply,
+    silence_nudge,
     spoken_limit,
     spoken_question,
     spoken_sentences,
@@ -33,13 +36,14 @@ class _Boom:
         raise RuntimeError("model down")
 
 
-def test_opening_line_names_the_ai_and_asks_the_first_question() -> None:
+def test_opening_line_names_the_ai_and_waits() -> None:
     line = opening_line("Sift", "Backend engineer", "Amina Rahman", "How do you test a service?")
     assert "AI interviewer" in line
     assert "Amina Rahman" in line
     assert "Backend engineer" in line
     assert "Sift" in line
-    assert line.endswith("How do you test a service?")
+    assert "How do you test a service?" not in line
+    assert line.endswith("Whenever you are ready.")
 
 
 def test_opening_line_waits_for_a_real_question_when_none_is_ready() -> None:
@@ -55,7 +59,7 @@ def test_spoken_question_addresses_the_candidate() -> None:
     assert spoken_question("Can the candidate build machine learning models?") == "Can you build machine learning models?"
     line = opening_line("Sift", "ML engineer", "Amina Rahman", asked)
     assert "the candidate" not in line.lower()
-    assert line.endswith(asked)
+    assert asked not in line
 
 
 def test_fallback_asks_the_candidate_instead_of_reading_the_rubric() -> None:
@@ -139,8 +143,7 @@ async def test_plan_reply_uses_the_model_question() -> None:
         transcript="recruiter: Can you write tests?",
         heard="I use pytest for every service.",
     )
-    assert "Which database did you use?" in utterance.say
-    assert "pytest" in utterance.say.lower()
+    assert utterance.say == "Which database did you use?"
     assert "Can you write tests?" in advanced.covered
     assert "I use pytest for every service." in provider.prompt
 
@@ -160,7 +163,7 @@ async def test_plan_reply_asks_the_checklist_when_the_model_fails() -> None:
         job_title="Backend engineer",
         profile="",
         transcript="",
-        heard="Yes.",
+        heard="I write tests for every service I ship.",
     )
     assert "Can you review a pull request?" in utterance.say
     assert utterance.finished is False
@@ -225,7 +228,6 @@ async def test_a_paraphrased_question_counts_as_the_next_checklist_item() -> Non
         heard="I trained one classifier.",
     )
     assert "Have you shipped a model?" in _utterance.say
-    assert "classifier" in _utterance.say.lower()
     assert "Does the candidate write tests?" in advanced.asked
 
 
@@ -271,7 +273,7 @@ async def test_a_real_answer_is_restated_in_the_second_person() -> None:
         transcript="recruiter: Do you have 7 years of experience?",
         heard="yes i have 10 years of experience",
     )
-    assert utterance.say.lower().startswith("so you have 10 years")
+    assert utterance.say.lower().startswith("got it.")
     assert "yes i have" not in utterance.say.lower()
     assert "Can you write tests?" in utterance.say
     assert "Do you have 7 years of experience?" in advanced.covered
@@ -297,8 +299,9 @@ async def test_a_mid_sentence_copy_stays_in_the_second_person() -> None:
         heard=heard,
     )
     spoken = utterance.say.lower()
-    assert spoken.startswith("so you have built the billing service and you have done the on-call rotation")
+    assert spoken.startswith("got it.")
     assert " i " not in f" {spoken} "
+    assert "billing service" not in spoken
     assert "Can you review a pull request?" in utterance.say
 
 
@@ -320,12 +323,108 @@ async def test_a_camera_question_is_answered_and_the_same_question_returns() -> 
         transcript="recruiter: Do you have 7 years of experience?",
         heard="is my camera alright",
     )
-    assert "camera" in utterance.say.lower()
+    assert "see you" in utterance.say.lower()
+    assert "text" not in utterance.say.lower()
     assert "is my camera alright" not in utterance.say.lower()
     assert "Do you have 7 years of experience?" in utterance.say
     assert "Can you write tests?" not in utterance.say
     assert advanced.covered == ()
     assert advanced.answers == 0
+
+
+@pytest.mark.asyncio
+async def test_a_visibility_question_is_answered_as_a_person_on_the_call() -> None:
+    agenda = Agenda(
+        questions=("Can you write tests?", "Can you review a pull request?"),
+        asked=("Can you write tests?",),
+    )
+    provider = _Provider(
+        '{"say": "I can\'t see you because this is a text interface.", "answered": false, "covered": [], "done": false, "quiz": false}'
+    )
+    utterance, advanced = await plan_reply(
+        FallbackLLMManager(provider, provider, provider),
+        agenda,
+        company="Sift",
+        job_title="Backend engineer",
+        profile="",
+        transcript="recruiter: Can you write tests?",
+        heard="am I visible",
+    )
+    assert "see you" in utterance.say.lower()
+    assert "text" not in utterance.say.lower()
+    assert "Can you write tests?" in utterance.say
+    assert advanced.answers == 0
+
+
+def test_the_listening_sound_is_words_the_voice_can_say() -> None:
+    assert HOLD_LINE == "uh huh."
+    assert "-" not in HOLD_LINE
+
+
+@pytest.mark.asyncio
+async def test_a_thin_answer_asks_for_one_example_before_moving_on() -> None:
+    agenda = Agenda(
+        questions=("Can you write tests?", "Can you review a pull request?"),
+        asked=("Can you write tests?",),
+    )
+    utterance, advanced = await plan_reply(
+        FallbackLLMManager(_Boom(), _Boom(), _Boom()),
+        agenda,
+        company="Sift",
+        job_title="Backend engineer",
+        profile="",
+        transcript="",
+        heard="Yes.",
+    )
+    assert utterance.say == "Could you walk me through an example?"
+    assert advanced.answers == 0
+    assert advanced.covered == ()
+    assert advanced.probed == ("Can you write tests?",)
+
+    follow, moved = await plan_reply(
+        FallbackLLMManager(_Boom(), _Boom(), _Boom()),
+        advanced,
+        company="Sift",
+        job_title="Backend engineer",
+        profile="",
+        transcript="",
+        heard="No.",
+    )
+    assert "Can you review a pull request?" in follow.say
+    assert "Can you write tests?" in moved.covered
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_moves_on_without_a_second_ask() -> None:
+    agenda = Agenda(
+        questions=("Can you write tests?", "Can you review a pull request?"),
+        asked=("Can you write tests?",),
+    )
+    utterance, advanced = await plan_reply(
+        FallbackLLMManager(_Boom(), _Boom(), _Boom()),
+        agenda,
+        company="Sift",
+        job_title="Backend engineer",
+        profile="",
+        transcript="",
+        heard="I would rather not say.",
+    )
+    assert utterance.say.startswith("That's all right.")
+    assert "Can you review a pull request?" in utterance.say
+    assert "Can you write tests?" in advanced.covered
+
+
+def test_a_cough_is_noise_and_a_sentence_keeps_the_turn() -> None:
+    spoken = "How do you test a service that writes to a database?"
+    assert interruption_is_noise("uh", spoken) is True
+    assert interruption_is_noise("", spoken) is True
+    assert interruption_is_noise(spoken, spoken) is True
+    assert interruption_is_noise("I write unit tests.", spoken) is False
+
+
+def test_silence_nudges_are_not_the_same_line() -> None:
+    assert silence_nudge(1) != silence_nudge(2)
+    assert "catch" not in silence_nudge(1).lower()
 
 
 def test_spoken_sentences_start_with_the_first_sentence() -> None:

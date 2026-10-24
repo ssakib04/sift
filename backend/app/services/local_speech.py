@@ -5,10 +5,14 @@ from collections.abc import Iterable
 from pathlib import Path
 
 VOICE_FILES = {
+    "en_GB-cori-medium": (
+        "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/cori/medium/en_GB-cori-medium.onnx",
+        "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/cori/medium/en_GB-cori-medium.onnx.json",
+    ),
     "en_US-lessac-medium": (
         "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx",
         "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json",
-    )
+    ),
 }
 
 
@@ -106,9 +110,10 @@ def pcm_from_chunks(chunks: Iterable[object]) -> tuple[bytes, int]:
 
 
 class SpeechGate:
-    """Collect one answer until the speaker has been quiet for a few seconds.
+    """Collect one answer, closing a short reply sooner than a story.
 
-    A new sound resets that wait. The answer stays open for up to five minutes.
+    A new sound resets the wait. A long answer can take a thinking pause.
+    The answer stays open for up to five minutes.
     """
 
     def __init__(
@@ -116,7 +121,10 @@ class SpeechGate:
         sample_rate: int = 16000,
         threshold: float = 0.02,
         speech_ms: int = 240,
-        silence_ms: int = 5000,
+        silence_ms: int = 2200,
+        short_silence_ms: int | None = None,
+        short_speech_ms: int = 2500,
+        hold_ms: int = 1200,
         max_ms: int = 300_000,
     ) -> None:
         if sample_rate <= 0:
@@ -124,13 +132,32 @@ class SpeechGate:
         self.sample_rate = sample_rate
         self.threshold = threshold
         self._speech_needed = sample_rate * speech_ms // 1000
-        self._silence_needed = sample_rate * silence_ms // 1000
+        self._long_silence = sample_rate * silence_ms // 1000
+        resolved_short = min(900, silence_ms) if short_silence_ms is None else short_silence_ms
+        self._short_silence = sample_rate * resolved_short // 1000
+        self._short_speech = sample_rate * short_speech_ms // 1000
+        self._hold_at = sample_rate * hold_ms // 1000
         self._max_samples = sample_rate * max_ms // 1000
         self._speech = 0
+        self._voiced = 0
         self._silence = 0
         self._armed = False
+        self._hold_sent = False
         self._chunks: list[bytes] = []
         self._samples = 0
+
+    @property
+    def armed(self) -> bool:
+        return self._armed
+
+    def wants_hold(self) -> bool:
+        """True once, when a long answer has paused long enough for a listening sound."""
+        if self._hold_sent or not self._armed or self._voiced < self._short_speech:
+            return False
+        if self._silence < self._hold_at:
+            return False
+        self._hold_sent = True
+        return True
 
     def push(self, pcm: bytes) -> bytes | None:
         samples = len(pcm) // 2
@@ -141,11 +168,15 @@ class SpeechGate:
         if pcm16_rms(pcm) >= self.threshold:
             self._speech += samples
             self._silence = 0
-            if self._speech >= self._speech_needed:
+            if not self._armed and self._speech >= self._speech_needed:
                 self._armed = True
+                self._voiced = self._speech
+            elif self._armed:
+                self._voiced += samples
         elif self._armed:
             self._silence += samples
-        if self._armed and (self._silence >= self._silence_needed or self._samples >= self._max_samples):
+        needed = self._short_silence if self._voiced < self._short_speech else self._long_silence
+        if self._armed and (self._silence >= needed or self._samples >= self._max_samples):
             return self._take()
         if not self._armed and self._samples > self.sample_rate * 3:
             self._chunks = self._chunks[-8:]
@@ -158,8 +189,10 @@ class SpeechGate:
         self._chunks = []
         self._samples = 0
         self._speech = 0
+        self._voiced = 0
         self._silence = 0
         self._armed = False
+        self._hold_sent = False
         return audio
 
 
@@ -229,9 +262,17 @@ class PiperSynthesizer:
         spoken = " ".join(text.split())
         if not spoken:
             return b"", 22050
+        from piper.config import SynthesisConfig
+
+        question = spoken.endswith("?")
+        config = SynthesisConfig(
+            length_scale=1.08 if question else 1.24,
+            noise_scale=0.4,
+            noise_w_scale=0.48,
+        )
         synthesize = getattr(self._voice, "synthesize", None)
         if synthesize is not None:
-            audio, rate = pcm_from_chunks(list(synthesize(spoken)))
+            audio, rate = pcm_from_chunks(list(synthesize(spoken, syn_config=config)))
             if audio:
                 return audio, rate
         import io

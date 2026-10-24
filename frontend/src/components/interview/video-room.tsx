@@ -2,7 +2,8 @@
 
 import { ConnectionState, Room, RoomEvent, Track } from "livekit-client";
 import type { TranscriptTurn } from "@/lib/api";
-import { CartoonAvatar } from "@/components/interview/cartoon-avatar";
+import { elementMuted, isAgentAudio, type PlaybackOwner } from "@/components/interview/agent-audio";
+import { InterviewerAvatar } from "@/components/interview/interviewer-avatar";
 import { PointerEvent as ReactPointerEvent, ReactNode, useEffect, useRef, useState } from "react";
 
 type VideoRoomProps = {
@@ -92,6 +93,8 @@ export function VideoRoom({
   const [avatar, setAvatar] = useState(false);
   const [mouth, setMouth] = useState(0);
   const [avatarStream, setAvatarStream] = useState<MediaStream | null>(null);
+  const [avatarOwnsAudio, setAvatarOwnsAudio] = useState(false);
+  const [portraitJaw, setPortraitJaw] = useState(false);
   const [selfPlace, setSelfPlace] = useState({ right: 16, bottom: 88 });
   void sessionId;
   void token;
@@ -120,10 +123,10 @@ export function VideoRoom({
           }
           if (track.kind === "video" && isPerson(participant.identity)) {
             videoTracks.push(track);
-          } else if (track.kind === "audio" && isPerson(participant.identity)) {
-            personAudio.push(track);
-          } else if (track.kind === "audio" && !isPerson(participant.identity)) {
+          } else if (isAgentAudio(participant.identity, track.kind)) {
             avatarTracks.push(track);
+          } else if (track.kind === "audio") {
+            personAudio.push(track);
           }
         });
       });
@@ -135,6 +138,9 @@ export function VideoRoom({
           remoteRef.current.srcObject = media;
         }
         avatarTrackRef.current = "";
+        if (avatarAudioRef.current) {
+          avatarAudioRef.current.srcObject = null;
+        }
         if (!cancelled) {
           setAvatar(false);
           setAvatarStream(null);
@@ -322,7 +328,7 @@ export function VideoRoom({
   }, [attempt, livekitToken, livekitUrl, onConnection]);
 
   useEffect(() => {
-    if (!avatarStream) {
+    if (!avatarStream || !portraitJaw) {
       setMouth(0);
       return;
     }
@@ -369,7 +375,7 @@ export function VideoRoom({
       source.disconnect();
       void context.close();
     };
-  }, [avatarStream]);
+  }, [avatarStream, portraitJaw]);
 
   useEffect(() => {
     if (!captureFrames || !onFrame) {
@@ -501,8 +507,21 @@ export function VideoRoom({
         playsInline
         className={`absolute inset-0 h-full w-full object-cover ${hasRemote && !avatar ? "" : "hidden"}`}
       />
-      <audio ref={avatarAudioRef} autoPlay playsInline />
-      {avatar ? <CartoonAvatar mouth={mouth} /> : null}
+      <audio ref={avatarAudioRef} autoPlay playsInline muted={avatarOwnsAudio} />
+      {avatar ? (
+        <InterviewerAvatar
+          stream={avatarStream}
+          mouth={mouth}
+          onPlaybackOwner={(owner: PlaybackOwner) => {
+            const muted = elementMuted(owner);
+            if (avatarAudioRef.current) {
+              avatarAudioRef.current.muted = muted;
+            }
+            setAvatarOwnsAudio(muted);
+          }}
+          onPortraitJaw={setPortraitJaw}
+        />
+      ) : null}
       <div
         className={
           hasRemote
