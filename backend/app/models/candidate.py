@@ -225,6 +225,7 @@ class InterviewSession(Base):
     biometric_consented_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     face_admitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     conductor: Mapped[str] = mapped_column(String(16), default="", server_default="")
+    report_progress: Mapped[dict[str, str]] = mapped_column(JSON, default=dict, server_default="{}")
     scheduled_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     scheduled_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     calendar_event_id: Mapped[str] = mapped_column(String(255), default="", server_default="")

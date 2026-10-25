@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 
 import { IdentityPanel } from "@/components/interview/identity-panel";
 import { InCallCopilot } from "@/components/interview/in-call-copilot";
@@ -24,6 +24,7 @@ import {
 
 export default function InterviewPage() {
   const params = useParams<{ roomId: string }>();
+  const router = useRouter();
   const roomId = params.roomId;
   const [token, setToken] = useState("");
   const [role, setRole] = useState<"candidate" | "recruiter" | "">("");
@@ -215,6 +216,7 @@ export default function InterviewPage() {
     setClosed(true);
     setEnding(true);
     setEndError("");
+    let leaving = false;
     try {
       await apiRequest<InterviewDetail>(`/api/v1/interview-sessions/${roomId}/end`, {
         method: "POST",
@@ -225,13 +227,19 @@ export default function InterviewPage() {
       });
       setDetail(next);
       setMessage("");
+      if (next.candidate_id) {
+        leaving = true;
+        router.push(`/candidates/${next.candidate_id}`);
+      }
     } catch (error: unknown) {
       const text = error instanceof Error ? error.message : "The interview could not be ended.";
       setClosed(false);
       setEndError(text);
       setMessage(text);
     } finally {
-      setEnding(false);
+      if (!leaving) {
+        setEnding(false);
+      }
     }
   }
 
@@ -342,7 +350,7 @@ export default function InterviewPage() {
             <div className="grid h-full place-items-center px-6 text-center">
               <div className="max-w-md space-y-3">
                 <p className="text-ivory">{ending ? "Saving the interview." : "This interview has ended."}</p>
-                <p className="text-sm text-mist">The reports are saved with this candidate. Open one at a time from their page.</p>
+                <p className="text-sm text-mist">The reports are on this candidate's page.</p>
                 {!ending && detail?.candidate_id ? (
                   <Link href={`/candidates/${detail.candidate_id}`} className="text-sm text-ivory underline">
                     Open reports

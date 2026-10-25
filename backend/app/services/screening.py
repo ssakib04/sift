@@ -44,6 +44,7 @@ from app.services.identification import store_candidate_face, store_candidate_pr
 from app.services.interview_booking import remote_busy, reserve_call, taken_windows
 from app.services.invites import InviteSender
 from app.services.ranking import RankInput, rank_candidates
+from app.services.report_progress import visible_report_progress
 from app.services.schedule import BusyWindow, format_schedule, interview_zone
 
 logger = logging.getLogger(__name__)
@@ -591,6 +592,11 @@ def _to_candidate_read(
         scheduled_label=_scheduled_label(
             interview.scheduled_start if interview is not None else None,
             interview.scheduled_end if interview is not None else None,
+        ),
+        interview_status=interview.status if interview is not None else "",
+        report_progress=visible_report_progress(
+            interview.status if interview is not None else "",
+            interview.report_progress if interview is not None else None,
         ),
     )
 

@@ -32,76 +32,55 @@ export function reportKey(value: string | null): ReportKey | "" {
 
 export function CandidateReport({
   selected,
+  progress,
+  onRetry,
   score,
-  scoring,
-  onScore,
   quality,
-  reviewing,
-  onReview,
   analysis,
   analysisStatus,
   analysisNote,
-  onRerunAnalysis,
   claims,
-  checking,
-  onCheckClaims,
   assessment,
-  building,
-  onBuildAssessment,
   onDownloadAssessment,
   quiz,
   evaluations,
+  ended,
 }: {
-  selected: ReportKey | "";
+  selected: ReportKey;
+  progress: Record<string, string>;
+  onRetry: () => void;
   score: InterviewScore | null;
-  scoring: boolean;
-  onScore: () => void;
   quality: InterviewQuality | null;
-  reviewing: boolean;
-  onReview: () => void;
   analysis: InterviewAnalysis | null;
   analysisStatus: "ready" | "pending" | "failed" | "missing";
   analysisNote: string;
-  onRerunAnalysis: () => void;
   claims: ClaimVerification | null;
-  checking: boolean;
-  onCheckClaims: () => void;
   assessment: MasterAssessment | null;
-  building: boolean;
-  onBuildAssessment: () => void;
   onDownloadAssessment: () => void;
   quiz: RecruiterQuiz | null;
   evaluations: CandidateEvaluation[];
+  ended: boolean;
 }) {
-  if (!selected) {
-    return <p className="text-sm text-mist">Choose a report. Each one opens on its own.</p>;
-  }
   if (selected === "score") {
-    return <ScoreReport score={score} scoring={scoring} onScore={onScore} />;
+    return <ScoreReport score={score} phase={progress.score || ""} onRetry={onRetry} ended={ended} />;
   }
   if (selected === "quality") {
-    return <QualityReport quality={quality} reviewing={reviewing} onReview={onReview} />;
+    return <QualityReport quality={quality} phase={progress.quality || ""} onRetry={onRetry} ended={ended} />;
   }
   if (selected === "qa") {
-    return (
-      <QaReport
-        analysis={analysis}
-        status={analysisStatus}
-        note={analysisNote}
-        onRetry={onRerunAnalysis}
-      />
-    );
+    return <QaReport analysis={analysis} status={progress.qa === "pending" ? "pending" : progress.qa === "failed" ? "failed" : analysisStatus} note={analysisNote} onRetry={onRetry} ended={ended} />;
   }
   if (selected === "claims") {
-    return <ClaimsReport claims={claims} checking={checking} onCheckClaims={onCheckClaims} />;
+    return <ClaimsReport claims={claims} phase={progress.claims || ""} onRetry={onRetry} ended={ended} />;
   }
   if (selected === "assessment") {
     return (
       <AssessmentReport
         assessment={assessment}
-        building={building}
-        onBuildAssessment={onBuildAssessment}
+        phase={progress.assessment || ""}
+        onRetry={onRetry}
         onDownloadAssessment={onDownloadAssessment}
+        ended={ended}
       />
     );
   }
@@ -111,35 +90,30 @@ export function CandidateReport({
   return <ChecklistReport evaluations={evaluations} />;
 }
 
-function ScoreReport({
-  score,
-  scoring,
-  onScore,
-}: {
-  score: InterviewScore | null;
-  scoring: boolean;
-  onScore: () => void;
-}) {
+function waitingCopy(phase: string, writing: string, failed: string, idle: string): string {
+  if (phase === "pending") {
+    return writing;
+  }
+  if (phase === "failed") {
+    return failed;
+  }
+  return idle;
+}
+
+function ScoreReport({ score, phase, onRetry, ended }: { score: InterviewScore | null; phase: string; onRetry: () => void; ended: boolean }) {
   return (
-    <section className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="font-display text-2xl font-medium text-ivory">Interview score</h2>
-        <button type="button" onClick={onScore} disabled={scoring || Boolean(score)} className={buttonClass("secondary")}>
-          {scoring ? "Scoring" : score ? "Scored" : "Score interview"}
-        </button>
-      </div>
-      <p className="text-sm text-mist">This score uses only the interview. It is separate from the CV score.</p>
+    <section className="space-y-4">
+      <h2 className="font-display text-3xl font-medium text-ivory">Interview score</h2>
+      <p className="text-base leading-7 text-mist">This score uses only the interview. It is separate from the CV score.</p>
       {score ? (
-        <div className="space-y-3">
-          <p className="text-sm text-ivory">
-            Interview performance {score.overall_score.toFixed(1)} / 100
-          </p>
-          <p className="text-sm text-mist">{score.summary}</p>
+        <div className="space-y-4">
+          <p className="font-display text-4xl text-ivory">{score.overall_score.toFixed(1)}</p>
+          <p className="text-base leading-7 text-ivory">{score.summary}</p>
           <ul className="space-y-2">
             {score.dimensions.map((item) => (
               <li key={item.key}>
                 <Panel>
-                  <div className="space-y-1 px-4 py-3 text-sm">
+                  <div className="space-y-1 px-4 py-3 text-base leading-7">
                     <p className="font-medium text-ivory">
                       {item.label} · {item.score.toFixed(1)}
                     </p>
@@ -152,42 +126,38 @@ function ScoreReport({
           </ul>
         </div>
       ) : (
-        <p className="text-sm text-mist">The interview score appears after the interview ends.</p>
+        <div className="space-y-3">
+          <p className="text-base leading-7 text-mist">
+            {waitingCopy(phase, "Writing the interview score.", "The interview score could not be written.", ended ? "This part was not written." : "The interview score appears after the interview ends.")}
+          </p>
+          {phase === "failed" ? (
+            <button type="button" onClick={onRetry} className={buttonClass("secondary")}>
+              Try again
+            </button>
+          ) : null}
+        </div>
       )}
     </section>
   );
 }
 
-function QualityReport({
-  quality,
-  reviewing,
-  onReview,
-}: {
-  quality: InterviewQuality | null;
-  reviewing: boolean;
-  onReview: () => void;
-}) {
+function QualityReport({ quality, phase, onRetry, ended }: { quality: InterviewQuality | null; phase: string; onRetry: () => void; ended: boolean }) {
   return (
-    <section className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="font-display text-2xl font-medium text-ivory">Interview quality</h2>
-        <button type="button" onClick={onReview} disabled={reviewing || Boolean(quality)} className={buttonClass("secondary")}>
-          {reviewing ? "Reviewing" : quality ? "Reviewed" : "Review interview"}
-        </button>
-      </div>
-      <p className="text-sm text-mist">This report is about how the interview was run. It does not score the candidate.</p>
+    <section className="space-y-4">
+      <h2 className="font-display text-3xl font-medium text-ivory">Interview quality</h2>
+      <p className="text-base leading-7 text-mist">This report is about how the interview was run. It does not score the candidate.</p>
       {quality ? (
         <div className="space-y-3">
-          <p className="text-sm text-ivory">Process quality {quality.overall_score.toFixed(1)} / 100</p>
-          <p className="text-sm text-mist">{quality.summary}</p>
-          <p className="text-sm text-mist">
+          <p className="text-base leading-7 text-ivory">Process quality {quality.overall_score.toFixed(1)} / 100</p>
+          <p className="text-base leading-7 text-mist">{quality.summary}</p>
+          <p className="text-base leading-7 text-mist">
             Interviewer {Math.round(quality.interviewer_share * 100)}% · Candidate {Math.round(quality.candidate_share * 100)}%
           </p>
           <ul className="space-y-2">
             {quality.dimensions.map((item) => (
               <li key={item.key}>
                 <Panel>
-                  <div className="space-y-1 px-4 py-3 text-sm">
+                  <div className="space-y-1 px-4 py-3 text-base leading-7">
                     <p className="font-medium text-ivory">
                       {item.label}
                       {item.score === null ? " · Not compared" : ` · ${item.score.toFixed(1)}`}
@@ -200,12 +170,12 @@ function QualityReport({
           </ul>
           {quality.recommendations.length ? (
             <div className="space-y-2">
-              <h3 className="text-sm font-semibold text-ivory">Improvements for the next interview</h3>
+              <h3 className="text-base font-semibold text-ivory">Improvements for the next interview</h3>
               <ul className="space-y-2">
                 {quality.recommendations.map((item) => (
                   <li key={`${item.kind}-${item.text}`}>
                     <Panel>
-                      <div className="space-y-1 px-4 py-3 text-sm">
+                      <div className="space-y-1 px-4 py-3 text-base leading-7">
                         <p className="text-xs uppercase tracking-wide text-mist">{item.kind.replaceAll("_", " ")}</p>
                         <p className="text-ivory">{item.text}</p>
                       </div>
@@ -215,11 +185,25 @@ function QualityReport({
               </ul>
             </div>
           ) : (
-            <p className="text-sm text-mist">No process changes suggested.</p>
+            <p className="text-base leading-7 text-mist">No process changes suggested.</p>
           )}
         </div>
       ) : (
-        <p className="text-sm text-mist">The process review appears after the interview ends.</p>
+        <div className="space-y-3">
+          <p className="text-base leading-7 text-mist">
+            {waitingCopy(
+              phase,
+              "Writing the process review.",
+              "The process review could not be written.",
+              ended ? "This part was not written." : "The process review appears after the interview ends.",
+            )}
+          </p>
+          {phase === "failed" ? (
+            <button type="button" onClick={onRetry} className={buttonClass("secondary")}>
+              Try again
+            </button>
+          ) : null}
+        </div>
       )}
     </section>
   );
@@ -230,36 +214,42 @@ function QaReport({
   status,
   note,
   onRetry,
+  ended,
 }: {
   analysis: InterviewAnalysis | null;
   status: "ready" | "pending" | "failed" | "missing";
   note: string;
   onRetry: () => void;
+  ended: boolean;
 }) {
   if (!analysis) {
     const writing = status === "pending";
     const failed = status === "failed";
     return (
       <section className="space-y-3">
-        <h2 className="font-display text-2xl font-medium text-ivory">Q&A analysis</h2>
-        <p className="text-sm text-mist">
+        <h2 className="font-display text-3xl font-medium text-ivory">Q&A analysis</h2>
+        <p className="text-base leading-7 text-mist">
           {writing
             ? "Writing the question and answer analysis."
             : failed
               ? note || "The question and answer analysis did not finish."
-              : "The question and answer analysis appears after the interview ends."}
+              : ended
+                ? "This part was not written."
+                : "The question and answer analysis appears after the interview ends."}
         </p>
-        <button type="button" onClick={onRetry} className={buttonClass()}>
-          {writing ? "Run again" : "Run analysis"}
-        </button>
+        {failed ? (
+          <button type="button" onClick={onRetry} className={buttonClass("secondary")}>
+            Try again
+          </button>
+        ) : null}
       </section>
     );
   }
   return (
     <section className="space-y-4">
-      <h2 className="font-display text-2xl font-medium text-ivory">Q&A analysis</h2>
-      <p className="text-sm text-mist">{analysis.summary}</p>
-      <ul className="grid gap-2 text-sm sm:grid-cols-2">
+      <h2 className="font-display text-3xl font-medium text-ivory">Q&A analysis</h2>
+      <p className="text-base leading-7 text-mist">{analysis.summary}</p>
+      <ul className="grid gap-2 text-base leading-7 sm:grid-cols-2">
         <li>
           <Panel>
             <div className="px-4 py-3">Relevance {analysis.relevance.toFixed(1)}</div>
@@ -283,8 +273,8 @@ function QaReport({
       </ul>
       {analysis.gaps.length > 0 ? (
         <div>
-          <h3 className="text-sm font-semibold text-ivory">Coverage gaps</h3>
-          <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-mist">
+          <h3 className="text-base font-semibold text-ivory">Coverage gaps</h3>
+          <ul className="mt-1 list-disc space-y-1 pl-5 text-base leading-7 text-mist">
             {analysis.gaps.map((gap) => (
               <li key={gap}>{gap}</li>
             ))}
@@ -293,8 +283,8 @@ function QaReport({
       ) : null}
       {analysis.discrepancies.length > 0 ? (
         <div>
-          <h3 className="text-sm font-semibold text-ivory">Discrepancies</h3>
-          <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-mist">
+          <h3 className="text-base font-semibold text-ivory">Discrepancies</h3>
+          <ul className="mt-1 list-disc space-y-1 pl-5 text-base leading-7 text-mist">
             {analysis.discrepancies.map((item) => (
               <li key={item}>{item}</li>
             ))}
@@ -306,7 +296,7 @@ function QaReport({
           {analysis.pairs.map((pair) => (
             <li key={pair.pair_id}>
               <Panel>
-                <div className="space-y-1 px-4 py-3 text-sm">
+                <div className="space-y-1 px-4 py-3 text-base leading-7">
                   <p className="font-medium text-ivory">
                     {pair.pair_id} · {pair.intent.replaceAll("_", " ")}
                   </p>
@@ -324,7 +314,7 @@ function QaReport({
         </ul>
       ) : null}
       {analysis.justifications.length > 0 ? (
-        <ul className="space-y-2 text-sm">
+        <ul className="space-y-2 text-base leading-7">
           {analysis.justifications.map((item) => (
             <li key={`${item.citation}-${item.claim}`}>
               <p className="text-ivory">{item.claim}</p>
@@ -337,30 +327,17 @@ function QaReport({
   );
 }
 
-function ClaimsReport({
-  claims,
-  checking,
-  onCheckClaims,
-}: {
-  claims: ClaimVerification | null;
-  checking: boolean;
-  onCheckClaims: () => void;
-}) {
+function ClaimsReport({ claims, phase, onRetry, ended }: { claims: ClaimVerification | null; phase: string; onRetry: () => void; ended: boolean }) {
   return (
-    <section className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="font-display text-2xl font-medium text-ivory">CV claims</h2>
-        <button type="button" onClick={onCheckClaims} disabled={checking} className={buttonClass("secondary")}>
-          {checking ? "Checking" : "Check CV claims"}
-        </button>
-      </div>
-      <p className="text-sm text-mist">
+    <section className="space-y-4">
+      <h2 className="font-display text-3xl font-medium text-ivory">CV claims</h2>
+      <p className="text-base leading-7 text-mist">
         Prompts for a follow-up conversation. A prompt asks for more detail. It does not reject the candidate or change the score.
       </p>
       {claims ? (
         <div className="space-y-4">
           {claims.supported_count > 0 ? (
-            <p className="text-sm text-ivory">
+            <p className="text-base leading-7 text-ivory">
               {claims.supported_count} CV {claims.supported_count === 1 ? "claim matches" : "claims match"} what the candidate said.
             </p>
           ) : null}
@@ -379,7 +356,7 @@ function ClaimsReport({
                     {group.map((flag) => (
                       <li key={flag.claim_id}>
                         <Panel>
-                          <div className="space-y-1 px-4 py-3 text-sm">
+                          <div className="space-y-1 px-4 py-3 text-base leading-7">
                             <p className="font-medium text-ivory">{flag.follow_up}</p>
                             <p className="text-mist">{flag.statement}</p>
                             {flag.cv_quote ? <p className="text-mist">CV: {flag.cv_quote}</p> : null}
@@ -393,13 +370,22 @@ function ClaimsReport({
               );
             })
           ) : (
-            <p className="text-sm text-mist">
+            <p className="text-base leading-7 text-mist">
               No follow-up prompts. The checked CV claims did not leave a contradiction, an unverified claim, or a claim the interview never reached.
             </p>
           )}
         </div>
       ) : (
-        <p className="text-sm text-mist">Follow-up prompts appear after the interview ends. Check CV claims once the transcript is ready.</p>
+        <div className="space-y-3">
+          <p className="text-base leading-7 text-mist">
+            {waitingCopy(phase, "Writing the CV claim check.", "The CV claim check could not be written.", ended ? "This part was not written." : "The CV claim check appears after the interview ends.")}
+          </p>
+          {phase === "failed" ? (
+            <button type="button" onClick={onRetry} className={buttonClass("secondary")}>
+              Try again
+            </button>
+          ) : null}
+        </div>
       )}
     </section>
   );
@@ -407,29 +393,26 @@ function ClaimsReport({
 
 function AssessmentReport({
   assessment,
-  building,
-  onBuildAssessment,
+  phase,
+  onRetry,
   onDownloadAssessment,
+  ended,
 }: {
   assessment: MasterAssessment | null;
-  building: boolean;
-  onBuildAssessment: () => void;
+  phase: string;
+  onRetry: () => void;
   onDownloadAssessment: () => void;
+  ended: boolean;
 }) {
   return (
-    <section className="space-y-3">
+    <section className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="font-display text-2xl font-medium text-ivory">Master assessment</h2>
-        <div className="flex flex-wrap gap-2">
-          <button type="button" onClick={onBuildAssessment} disabled={building} className={buttonClass()}>
-            {building ? "Building" : assessment ? "Rebuild assessment" : "Build assessment"}
+        <h2 className="font-display text-3xl font-medium text-ivory">Master assessment</h2>
+        {assessment ? (
+          <button type="button" onClick={onDownloadAssessment} className={buttonClass("secondary")}>
+            Download report
           </button>
-          {assessment ? (
-            <button type="button" onClick={onDownloadAssessment} className={buttonClass("secondary")}>
-              Download report
-            </button>
-          ) : null}
-        </div>
+        ) : null}
       </div>
       {assessment ? (
         <div className="space-y-3">
@@ -446,16 +429,16 @@ function AssessmentReport({
                       : "neutral"
               }
             />
-            <p className="text-sm text-ivory">
+            <p className="text-base leading-7 text-ivory">
               {assessment.overall_score !== null ? `Overall ${assessment.overall_score.toFixed(1)}` : "Overall not calculated"}
             </p>
-            <p className="text-sm text-mist">
+            <p className="text-base leading-7 text-mist">
               CV {Math.round(assessment.cv_weight * 100)}% · Quiz {Math.round(assessment.mcq_weight * 100)}% · Interview{" "}
               {Math.round(assessment.interview_weight * 100)}%
             </p>
           </div>
           <Panel>
-            <dl className="grid gap-2 px-4 py-3 text-sm sm:grid-cols-3">
+            <dl className="grid gap-2 px-4 py-3 text-base leading-7 sm:grid-cols-3">
               <div>
                 <dt className="text-mist">CV screening</dt>
                 <dd className="text-ivory">{assessment.component_scores.cv_screening?.toFixed(1) ?? "—"}</dd>
@@ -470,11 +453,11 @@ function AssessmentReport({
               </div>
             </dl>
           </Panel>
-          <p className="text-sm leading-6 text-ivory">{assessment.narrative}</p>
+          <p className="text-base leading-7 text-ivory">{assessment.narrative}</p>
           {assessment.strengths.length ? (
             <div>
-              <h3 className="text-sm font-semibold text-ivory">Strengths</h3>
-              <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-mist">
+              <h3 className="text-base font-semibold text-ivory">Strengths</h3>
+              <ul className="mt-1 list-disc space-y-1 pl-5 text-base leading-7 text-mist">
                 {assessment.strengths.map((item) => (
                   <li key={item}>{item}</li>
                 ))}
@@ -483,8 +466,8 @@ function AssessmentReport({
           ) : null}
           {assessment.weaknesses.length ? (
             <div>
-              <h3 className="text-sm font-semibold text-ivory">Weaknesses</h3>
-              <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-mist">
+              <h3 className="text-base font-semibold text-ivory">Weaknesses</h3>
+              <ul className="mt-1 list-disc space-y-1 pl-5 text-base leading-7 text-mist">
                 {assessment.weaknesses.map((item) => (
                   <li key={item}>{item}</li>
                 ))}
@@ -493,8 +476,8 @@ function AssessmentReport({
           ) : null}
           {assessment.evidence_gaps.length ? (
             <div>
-              <h3 className="text-sm font-semibold text-ivory">Evidence gaps</h3>
-              <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-mist">
+              <h3 className="text-base font-semibold text-ivory">Evidence gaps</h3>
+              <ul className="mt-1 list-disc space-y-1 pl-5 text-base leading-7 text-mist">
                 {assessment.evidence_gaps.map((item) => (
                   <li key={item}>{item}</li>
                 ))}
@@ -506,7 +489,7 @@ function AssessmentReport({
               {assessment.traceability.map((item) => (
                 <li key={`${item.source_type}-${item.source_reference}`}>
                   <Panel>
-                    <div className="space-y-1 px-4 py-3 text-sm">
+                    <div className="space-y-1 px-4 py-3 text-base leading-7">
                       <p className="font-medium text-ivory">{item.claim}</p>
                       <p className="text-mist">
                         {item.source_type} · {item.source_reference}
@@ -520,11 +503,21 @@ function AssessmentReport({
           ) : null}
         </div>
       ) : (
-        <p className="text-sm text-mist">
-          {building
-            ? "Writing the master assessment. You can leave this page and come back."
-            : "Build the report from the CV screening snapshot, the submitted quiz score, and the post-call Q&A analysis."}
-        </p>
+        <div className="space-y-3">
+          <p className="text-base leading-7 text-mist">
+            {waitingCopy(
+              phase,
+              "Writing the master assessment. You can leave this page and come back.",
+              "The master assessment could not be written.",
+              ended ? "This part was not written." : "The master assessment appears after the interview ends.",
+            )}
+          </p>
+          {phase === "failed" ? (
+            <button type="button" onClick={onRetry} className={buttonClass("secondary")}>
+              Try again
+            </button>
+          ) : null}
+        </div>
       )}
     </section>
   );
@@ -533,15 +526,15 @@ function AssessmentReport({
 function QuizReport({ quiz }: { quiz: RecruiterQuiz | null }) {
   return (
     <section className="space-y-3">
-      <h2 className="font-display text-2xl font-medium text-ivory">Skill quiz</h2>
+      <h2 className="font-display text-3xl font-medium text-ivory">Skill quiz</h2>
       {quiz?.status === "submitted" && quiz.score !== null ? (
         <div className="space-y-2">
-          <p className="text-sm text-ivory">Score {quiz.score} / 100</p>
+          <p className="text-base leading-7 text-ivory">Score {quiz.score} / 100</p>
           <ul className="space-y-2">
             {quiz.review.map((item) => (
               <li key={item.question_id}>
                 <Panel>
-                  <div className="space-y-1 px-4 py-3 text-sm">
+                  <div className="space-y-1 px-4 py-3 text-base leading-7">
                     <p className="font-medium text-ivory">{item.prompt}</p>
                     <p className="text-mist">
                       {item.correct ? "Correct" : "Incorrect"}
@@ -557,7 +550,7 @@ function QuizReport({ quiz }: { quiz: RecruiterQuiz | null }) {
           </ul>
         </div>
       ) : (
-        <p className="text-sm text-mist">{quiz?.status === "in_progress" ? "The skill quiz is in progress." : "No skill quiz yet."}</p>
+        <p className="text-base leading-7 text-mist">{quiz?.status === "in_progress" ? "The skill quiz is in progress." : "No skill quiz yet."}</p>
       )}
     </section>
   );
@@ -566,13 +559,13 @@ function QuizReport({ quiz }: { quiz: RecruiterQuiz | null }) {
 function ChecklistReport({ evaluations }: { evaluations: CandidateEvaluation[] }) {
   return (
     <section className="space-y-3">
-      <h2 className="font-display text-2xl font-medium text-ivory">CV checklist</h2>
+      <h2 className="font-display text-3xl font-medium text-ivory">CV checklist</h2>
       {evaluations.length ? (
         <ul className="space-y-2">
           {evaluations.map((item) => (
             <li key={item.query_id}>
               <Panel>
-                <div className="space-y-1 px-4 py-3 text-sm">
+                <div className="space-y-1 px-4 py-3 text-base leading-7">
                   <p className="font-medium text-ivory">
                     {item.query_id} · {item.status.replaceAll("_", " ")}
                   </p>
@@ -584,7 +577,7 @@ function ChecklistReport({ evaluations }: { evaluations: CandidateEvaluation[] }
           ))}
         </ul>
       ) : (
-        <p className="text-sm text-mist">No checklist results yet.</p>
+        <p className="text-base leading-7 text-mist">No checklist results yet.</p>
       )}
     </section>
   );

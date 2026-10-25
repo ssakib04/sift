@@ -27,6 +27,7 @@ from app.services.interview_score import store_interview_score
 from app.services.interview_analysis import AnalysisDraft, draft_for_transcript
 from app.services.identification import ensure_face_gate
 from app.services.interview_livekit import dispatch_room_agent, issue_livekit_token, room_has_recruiter
+from app.services.report_progress import advance_report_progress, initial_report_progress, reports_still_writing
 from app.services.interview_transcript import TranscriptWrite, accepted_speaker, spoken_window, transcript_write
 from app.services.interview_copilot import (
     CopilotAnswer,
@@ -191,6 +192,7 @@ async def end_interview(db: AsyncSession, llm: FallbackLLMManager, claims: Sessi
     clock = end_for_role(claims.role, _clock(row), now=datetime.now(UTC))
     await _finalize_open_lines(db, row.id)
     _apply_clock(row, clock)
+    row.report_progress = initial_report_progress()
     await db.commit()
     _schedule_analysis(row.id, llm)
     return row.status
@@ -361,6 +363,7 @@ async def close_interview_from_agent(session_id: str) -> None:
         clock = end_clock(_clock(row), now=datetime.now(UTC))
         await _finalize_open_lines(db, row.id)
         _apply_clock(row, clock)
+        row.report_progress = initial_report_progress()
         await db.commit()
     _schedule_analysis(interview_id, create_fallback_manager())
 
@@ -576,40 +579,114 @@ async def request_interview_analysis(db: AsyncSession, llm: FallbackLLMManager, 
     return "started"
 
 
+async def retry_report(db: AsyncSession, llm: FallbackLLMManager, candidate_id: uuid.UUID) -> bool:
+    """Write again any post-call report that failed. A report already saved is left as it is."""
+    interview = await db.scalar(select(InterviewSession).where(InterviewSession.candidate_id == candidate_id))
+    if interview is None or interview.ended_at is None:
+        raise InterviewError("SESSION_NOT_FOUND", "End the interview before writing the reports.", 404)
+    progress = dict(interview.report_progress or {})
+    if not progress:
+        progress = initial_report_progress()
+    else:
+        progress = {
+            step: "pending" if progress.get(step) == "failed" else progress.get(step, "pending")
+            for step in initial_report_progress()
+        }
+    if not reports_still_writing(progress):
+        return False
+    interview.report_progress = progress
+    interview.processing_status = "pending"
+    await db.commit()
+    _schedule_analysis(interview.id, llm)
+    return True
+
+
 async def _analyze_after_end(session_id: uuid.UUID, llm: FallbackLLMManager) -> None:
-    """Score the transcript after the call has already closed."""
+    """Write each report after the call has closed, and save progress after every one."""
     from app.core.database import SessionFactory
+    from app.models.candidate import ConsolidatedAssessment
+    from app.services.assessment import build_consolidated_assessment, claim_assessment_run, finish_assessment_run
 
     async with SessionFactory() as db:
         row = await db.get(InterviewSession, session_id)
-        if row is None or row.processing_status == "complete":
+        if row is None:
             return
+        if not reports_still_writing(row.report_progress):
+            if row.report_progress:
+                return
+            row.report_progress = initial_report_progress()
+            row.processing_status = "pending"
+            await db.commit()
         segments = await _segment_rows(db, row.id)
         checklist = await _checklist_items(db, row.job_version_id)
         turns = [
             {"speaker": segment.speaker, "start": segment.start_time, "end": segment.end_time, "text": segment.text}
             for segment in segments
         ]
-        try:
-            draft = await draft_for_transcript(llm, checklist, turns)
-            await _save_analysis(db, row, draft)
-            row.processing_status = "complete"
-        except Exception as exc:
+        row = await _write_report(db, row, "qa", lambda: _write_qa(db, llm, row, checklist, turns))
+        row = await _write_report(db, row, "claims", lambda: verify_stored_claims(db, llm, row, segments))
+        row = await _write_report(db, row, "score", lambda: store_interview_score(db, llm, row, segments))
+        row = await _write_report(db, row, "quality", lambda: store_interview_quality(db, row))
+        if (row.report_progress or {}).get("assessment") != "ready":
+            existing = await db.scalar(
+                select(ConsolidatedAssessment.id).where(ConsolidatedAssessment.candidate_id == row.candidate_id)
+            )
+            if existing is not None:
+                await _remember_report(db, row, "assessment", "ready")
+            elif claim_assessment_run(row.candidate_id):
+                try:
+                    await build_consolidated_assessment(db, llm, row.candidate_id)
+                    fresh = await db.get(InterviewSession, session_id)
+                    if fresh is not None:
+                        await _remember_report(db, fresh, "assessment", "ready")
+                except Exception:
+                    await db.rollback()
+                    fresh = await db.get(InterviewSession, session_id)
+                    if fresh is not None:
+                        await _remember_report(db, fresh, "assessment", "failed")
+                finally:
+                    finish_assessment_run(row.candidate_id, None)
+
+
+async def _write_qa(
+    db: AsyncSession,
+    llm: FallbackLLMManager,
+    row: InterviewSession,
+    checklist: list[dict[str, str]],
+    turns: list[dict[str, object]],
+) -> None:
+    existing = await db.scalar(select(InterviewAnalysis.id).where(InterviewAnalysis.session_id == row.id))
+    if existing is not None:
+        return
+    draft = await draft_for_transcript(llm, checklist, turns)
+    await _save_analysis(db, row, draft)
+
+
+async def _write_report(db: AsyncSession, row: InterviewSession, step: str, work) -> InterviewSession:
+    if (row.report_progress or {}).get(step) == "ready":
+        return row
+    try:
+        await work()
+        await _remember_report(db, row, step, "ready")
+        return row
+    except Exception as exc:
+        if step == "qa":
             _log_analysis_failure(exc)
-            row.processing_status = "failed"
-        try:
-            await verify_stored_claims(db, llm, row, segments)
-        except Exception:
-            logger.warning("claim_verification_failed")
-        try:
-            await store_interview_score(db, llm, row, segments)
-        except Exception:
-            logger.warning("interview_score_failed")
-        try:
-            await store_interview_quality(db, row)
-        except Exception:
-            logger.warning("interview_quality_failed")
-        await db.commit()
+        else:
+            logger.warning("%s_report_failed error_type=%s", step, type(exc).__name__)
+        await db.rollback()
+        fresh = await db.get(InterviewSession, row.id)
+        if fresh is None:
+            return row
+        await _remember_report(db, fresh, step, "failed")
+        return fresh
+
+
+async def _remember_report(db: AsyncSession, row: InterviewSession, step: str, state: str) -> None:
+    progress = advance_report_progress(dict(row.report_progress or {}), step, state)
+    row.report_progress = progress
+    row.processing_status = "pending" if reports_still_writing(progress) else "complete"
+    await db.commit()
 
 
 def _log_analysis_failure(exc: Exception) -> None:

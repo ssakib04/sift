@@ -31,6 +31,8 @@ class CandidateRead(BaseModel):
     job_id: UUID | None = None
     job_title: str = ""
     scheduled_label: str = ""
+    interview_status: str = ""
+    report_progress: dict[str, str] = Field(default_factory=dict)
     created_at: datetime
 
 

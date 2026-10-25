@@ -91,6 +91,10 @@ class IdentificationRead(BaseModel):
     admitted: bool = False
 
 
+class ReportRetryRead(BaseModel):
+    restarted: bool
+
+
 class SessionStatusRead(BaseModel):
     session_id: UUID
     status: str

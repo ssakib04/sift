@@ -7,12 +7,12 @@ from app.api.deps import get_llm
 from app.api.v1.auth import require_recruiter
 from app.core.database import get_session
 from app.core.llm_fallback import FallbackLLMManager
-from app.schemas.interview import AnalysisRead, AnalysisRunRead, JustificationRead, QAPairRead
+from app.schemas.interview import AnalysisRead, AnalysisRunRead, JustificationRead, QAPairRead, ReportRetryRead
 from app.schemas.interview_quality import InterviewQualityRead
 from app.schemas.interview_score import InterviewHistoryRead, InterviewScoreRead
 from app.services.interview_quality import QualityError, build_interview_quality, read_interview_quality
 from app.services.interview_rules import InterviewError
-from app.services.interview_sessions import request_interview_analysis
+from app.services.interview_sessions import request_interview_analysis, retry_report
 from app.services.interview_score import (
     ScoreError,
     build_interview_score,
@@ -67,6 +67,19 @@ async def create_quality(candidate_id: UUID, session: AsyncSession = Depends(get
         return await build_interview_quality(session, candidate_id)
     except QualityError as exc:
         raise _http(exc) from exc
+
+
+@router.post("/candidates/{candidate_id}/reports/retry", response_model=ReportRetryRead)
+async def retry_reports(
+    candidate_id: UUID,
+    session: AsyncSession = Depends(get_session),
+    llm: FallbackLLMManager = Depends(get_llm),
+) -> ReportRetryRead:
+    try:
+        restarted = await retry_report(session, llm, candidate_id)
+    except InterviewError as exc:
+        raise _http(exc) from exc
+    return ReportRetryRead(restarted=restarted)
 
 
 @router.post("/candidates/{candidate_id}/interview-analysis", response_model=AnalysisRunRead)

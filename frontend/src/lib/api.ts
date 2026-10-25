@@ -51,6 +51,10 @@ export type AnalysisRun = {
   state: "started" | "ready";
 };
 
+export type ReportRetry = {
+  restarted: boolean;
+};
+
 export type JobRecord = {
   id: string;
   title: string;
@@ -83,6 +87,8 @@ export type CandidateRecord = {
   job_id: string | null;
   job_title: string;
   scheduled_label?: string;
+  interview_status?: string;
+  report_progress?: Record<string, string>;
   created_at: string;
 };
 
