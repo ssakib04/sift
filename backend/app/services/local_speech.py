@@ -267,9 +267,9 @@ class PiperSynthesizer:
 
         question = spoken.endswith("?")
         config = SynthesisConfig(
-            length_scale=1.08 if question else 1.24,
-            noise_scale=0.4,
-            noise_w_scale=0.48,
+            length_scale=1.22 if question else 1.4,
+            noise_scale=0.32,
+            noise_w_scale=0.4,
         )
         synthesize = getattr(self._voice, "synthesize", None)
         if synthesize is not None:
