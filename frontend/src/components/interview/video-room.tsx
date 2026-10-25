@@ -2,8 +2,8 @@
 
 import { ConnectionState, Room, RoomEvent, Track } from "livekit-client";
 import type { TranscriptTurn } from "@/lib/api";
-import { elementMuted, isAgentAudio, type PlaybackOwner } from "@/components/interview/agent-audio";
-import { InterviewerAvatar } from "@/components/interview/interviewer-avatar";
+import { isAgentAudio, presenceMood, type PresenceMood } from "@/components/interview/agent-audio";
+import { InterviewerPresence } from "@/components/interview/interviewer-avatar";
 import { PointerEvent as ReactPointerEvent, ReactNode, useEffect, useRef, useState } from "react";
 
 type VideoRoomProps = {
@@ -91,10 +91,9 @@ export function VideoRoom({
   const [attempt, setAttempt] = useState(0);
   const [hasRemote, setHasRemote] = useState(false);
   const [avatar, setAvatar] = useState(false);
+  const [mind, setMind] = useState<PresenceMood>("listening");
   const [mouth, setMouth] = useState(0);
   const [avatarStream, setAvatarStream] = useState<MediaStream | null>(null);
-  const [avatarOwnsAudio, setAvatarOwnsAudio] = useState(false);
-  const [portraitJaw, setPortraitJaw] = useState(false);
   const [selfPlace, setSelfPlace] = useState({ right: 16, bottom: 88 });
   void sessionId;
   void token;
@@ -260,11 +259,14 @@ export function VideoRoom({
         connection.on(RoomEvent.DataReceived, (payload, _participant, _kind, topic) => {
           if (topic === "interview") {
             try {
-              const notice = JSON.parse(new TextDecoder().decode(payload)) as { type?: string };
+              const notice = JSON.parse(new TextDecoder().decode(payload)) as { type?: string; state?: string };
               if (notice.type === "avatar" && !cancelled) {
                 avatarCueRef.current = true;
                 setAvatar(true);
                 setHasRemote(true);
+                if (typeof notice.state === "string") {
+                  setMind(presenceMood(notice.state));
+                }
                 report(describe(connection));
                 void connection.startAudio();
               }
@@ -328,7 +330,7 @@ export function VideoRoom({
   }, [attempt, livekitToken, livekitUrl, onConnection]);
 
   useEffect(() => {
-    if (!avatarStream || !portraitJaw) {
+    if (!avatarStream) {
       setMouth(0);
       return;
     }
@@ -375,7 +377,7 @@ export function VideoRoom({
       source.disconnect();
       void context.close();
     };
-  }, [avatarStream, portraitJaw]);
+  }, [avatarStream]);
 
   useEffect(() => {
     if (!captureFrames || !onFrame) {
@@ -507,21 +509,8 @@ export function VideoRoom({
         playsInline
         className={`absolute inset-0 h-full w-full object-cover ${hasRemote && !avatar ? "" : "hidden"}`}
       />
-      <audio ref={avatarAudioRef} autoPlay playsInline muted={avatarOwnsAudio} />
-      {avatar ? (
-        <InterviewerAvatar
-          stream={avatarStream}
-          mouth={mouth}
-          onPlaybackOwner={(owner: PlaybackOwner) => {
-            const muted = elementMuted(owner);
-            if (avatarAudioRef.current) {
-              avatarAudioRef.current.muted = muted;
-            }
-            setAvatarOwnsAudio(muted);
-          }}
-          onPortraitJaw={setPortraitJaw}
-        />
-      ) : null}
+      <audio ref={avatarAudioRef} autoPlay playsInline />
+      {avatar ? <InterviewerPresence level={mouth} mood={mind} /> : null}
       <div
         className={
           hasRemote

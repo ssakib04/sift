@@ -2,8 +2,8 @@ import pytest
 
 from app.core.llm_fallback import FallbackLLMManager
 from app.services.interview_conductor import (
-    HOLD_LINE,
     Agenda,
+    answer_beat,
     answer_limit,
     echoes_prompt,
     fallback_utterance,
@@ -12,6 +12,7 @@ from app.services.interview_conductor import (
     note_answer,
     opening_line,
     plan_reply,
+    settled_turn_kind,
     silence_nudge,
     spoken_limit,
     spoken_question,
@@ -131,7 +132,7 @@ def test_fallback_walks_the_checklist_then_closes_with_the_quiz() -> None:
 @pytest.mark.asyncio
 async def test_plan_reply_uses_the_model_question() -> None:
     provider = _Provider(
-        '{"say": "Which database did you use?", "covered": ["Can you write tests?"], "done": false, "quiz": false}'
+        '{"say": "Pytest on every service. Which database did you use?", "answered": true, "covered": ["Can you write tests?"], "done": false, "quiz": false}'
     )
     agenda = note_answer(Agenda(questions=("Can you write tests?", "Can you review a pull request?"), asked=("Can you write tests?",)))
     utterance, advanced = await plan_reply(
@@ -143,7 +144,8 @@ async def test_plan_reply_uses_the_model_question() -> None:
         transcript="recruiter: Can you write tests?",
         heard="I use pytest for every service.",
     )
-    assert utterance.say == "Which database did you use?"
+    assert "Pytest on every service." in utterance.say
+    assert "Which database did you use?" in utterance.say
     assert "Can you write tests?" in advanced.covered
     assert "I use pytest for every service." in provider.prompt
 
@@ -273,10 +275,10 @@ async def test_a_real_answer_is_restated_in_the_second_person() -> None:
         transcript="recruiter: Do you have 7 years of experience?",
         heard="yes i have 10 years of experience",
     )
-    assert utterance.say.lower().startswith("got it.")
     assert "yes i have" not in utterance.say.lower()
-    assert "Can you write tests?" in utterance.say
-    assert "Do you have 7 years of experience?" in advanced.covered
+    assert "Do you have 7 years of experience?" in utterance.say
+    assert advanced.answers == 0
+    assert "Do you have 7 years of experience?" not in advanced.covered
 
 
 @pytest.mark.asyncio
@@ -299,10 +301,9 @@ async def test_a_mid_sentence_copy_stays_in_the_second_person() -> None:
         heard=heard,
     )
     spoken = utterance.say.lower()
-    assert spoken.startswith("got it.")
-    assert " i " not in f" {spoken} "
+    assert "can you write tests?" in spoken
     assert "billing service" not in spoken
-    assert "Can you review a pull request?" in utterance.say
+    assert _advanced.answers == 0
 
 
 @pytest.mark.asyncio
@@ -356,9 +357,12 @@ async def test_a_visibility_question_is_answered_as_a_person_on_the_call() -> No
     assert advanced.answers == 0
 
 
-def test_the_listening_sound_is_words_the_voice_can_say() -> None:
-    assert HOLD_LINE == "uh huh."
-    assert "-" not in HOLD_LINE
+def test_a_finished_answer_is_not_taken_back() -> None:
+    assert settled_turn_kind("answer", "question") == "answer"
+    assert settled_turn_kind("answer", "partial") == "answer"
+    assert settled_turn_kind("question", "answer") == "answer"
+    assert settled_turn_kind("question", "aside") == "question"
+    assert answer_beat() > 0
 
 
 @pytest.mark.asyncio
@@ -390,8 +394,10 @@ async def test_a_thin_answer_asks_for_one_example_before_moving_on() -> None:
         transcript="",
         heard="No.",
     )
-    assert "Can you review a pull request?" in follow.say
-    assert "Can you write tests?" in moved.covered
+    assert "That does not answer it yet." in follow.say
+    assert "Can you write tests?" in follow.say
+    assert "Can you write tests?" not in moved.covered
+    assert moved.answers == 0
 
 
 @pytest.mark.asyncio
@@ -439,14 +445,14 @@ class _Judge:
 
 
 @pytest.mark.asyncio
-async def test_a_local_question_label_keeps_the_same_checklist_item() -> None:
+async def test_a_finished_answer_moves_on_when_the_local_model_would_call_it_a_question() -> None:
     agenda = Agenda(
         questions=("Can you write tests?", "Can you review a pull request?"),
         asked=("Can you write tests?",),
     )
     provider = _Judge(
         '{"kind": "question"}',
-        '{"say": "About twelve people.", "answered": true, "covered": ["Can you write tests?"], "done": false, "quiz": false}',
+        '{"say": "How do you review a pull request?", "answered": true, "covered": ["Can you write tests?"], "done": false, "quiz": false}',
     )
     utterance, advanced = await plan_reply(
         FallbackLLMManager(provider, provider, provider),
@@ -457,22 +463,21 @@ async def test_a_local_question_label_keeps_the_same_checklist_item() -> None:
         transcript="recruiter: Can you write tests?",
         heard="I led the billing migration for two years and I want the team size",
     )
-    assert "twelve" in utterance.say.lower()
-    assert "Can you write tests?" in utterance.say
-    assert advanced.covered == ()
-    assert advanced.answers == 0
-    assert provider.calls == 2
+    assert utterance.say == "How do you review a pull request?"
+    assert "Can you write tests?" in advanced.covered
+    assert advanced.answers == 1
+    assert provider.calls == 1
 
 
 @pytest.mark.asyncio
-async def test_a_local_partial_label_asks_for_an_example() -> None:
+async def test_a_substantial_answer_moves_on_when_the_local_model_would_call_it_partial() -> None:
     agenda = Agenda(
         questions=("Can you write tests?", "Can you review a pull request?"),
         asked=("Can you write tests?",),
     )
     provider = _Judge(
         '{"kind": "partial"}',
-        '{"say": "Next question.", "answered": true, "covered": ["Can you write tests?"], "done": false, "quiz": false}',
+        '{"say": "Can you review a pull request?", "answered": true, "covered": ["Can you write tests?"], "done": false, "quiz": false}',
     )
     utterance, advanced = await plan_reply(
         FallbackLLMManager(provider, provider, provider),
@@ -483,21 +488,21 @@ async def test_a_local_partial_label_asks_for_an_example() -> None:
         transcript="",
         heard="I have done some testing in a few services.",
     )
-    assert utterance.say == "Could you walk me through an example?"
-    assert advanced.answers == 0
-    assert advanced.probed == ("Can you write tests?",)
+    assert utterance.say == "Can you review a pull request?"
+    assert advanced.answers == 1
+    assert "Can you write tests?" in advanced.covered
     assert provider.calls == 1
 
 
 @pytest.mark.asyncio
-async def test_a_local_decline_label_moves_on() -> None:
+async def test_a_finished_answer_is_not_treated_as_a_refusal() -> None:
     agenda = Agenda(
         questions=("Can you write tests?", "Can you review a pull request?"),
         asked=("Can you write tests?",),
     )
     provider = _Judge(
         '{"kind": "decline"}',
-        '{"say": "Tell me more.", "answered": false, "covered": [], "done": false, "quiz": false}',
+        '{"say": "Can you review a pull request?", "answered": true, "covered": [], "done": false, "quiz": false}',
     )
     utterance, advanced = await plan_reply(
         FallbackLLMManager(provider, provider, provider),
@@ -508,8 +513,8 @@ async def test_a_local_decline_label_moves_on() -> None:
         transcript="",
         heard="I led the billing migration for two years.",
     )
-    assert utterance.say.startswith("That's all right.")
-    assert "Can you review a pull request?" in utterance.say
+    assert utterance.say == "Can you review a pull request?"
+    assert "That's all right." not in utterance.say
     assert "Can you write tests?" in advanced.covered
     assert provider.calls == 1
 
@@ -535,7 +540,51 @@ async def test_a_broken_local_label_uses_the_keyword_rules() -> None:
     )
     assert utterance.say == "Which database did you use?"
     assert "Can you write tests?" in advanced.covered
+    assert provider.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_a_short_question_stays_on_the_same_item() -> None:
+    agenda = Agenda(
+        questions=("Can you write tests?", "Can you review a pull request?"),
+        asked=("Can you write tests?",),
+    )
+    provider = _Judge(
+        '{"kind": "question"}',
+        '{"say": "That is discussed later. Can you write tests?", "answered": false, "covered": [], "done": false, "quiz": false}',
+    )
+    utterance, advanced = await plan_reply(
+        FallbackLLMManager(provider, provider, provider),
+        agenda,
+        company="Sift",
+        job_title="Backend engineer",
+        profile="",
+        transcript="",
+        heard="What is the salary?",
+    )
+    assert "Can you write tests?" in utterance.say
+    assert advanced.answers == 0
     assert provider.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_a_long_answer_that_opens_with_what_stays_until_it_answers() -> None:
+    agenda = Agenda(
+        questions=("Can you write tests?", "Can you review a pull request?"),
+        asked=("Can you write tests?",),
+    )
+    utterance, advanced = await plan_reply(
+        FallbackLLMManager(_Boom(), _Boom(), _Boom()),
+        agenda,
+        company="Sift",
+        job_title="Backend engineer",
+        profile="",
+        transcript="",
+        heard="What I built was a billing service that handled retries for six months.",
+    )
+    assert "Can you write tests?" in utterance.say
+    assert "Can you write tests?" not in advanced.covered
+    assert advanced.answers == 0
 
 
 def test_silence_nudges_are_not_the_same_line() -> None:

@@ -17,10 +17,9 @@ from app.core.llm_fallback import FallbackLLMManager, create_fallback_manager
 from app.models.candidate import Candidate, CandidateParseResult, InterviewSession
 from app.models.job import JobVersion
 from app.services.interview_conductor import (
-    HOLD_LINE,
     QUIZ_LINE,
     Agenda,
-    acknowledgement,
+    answer_beat,
     candidate_asked,
     classify_turn,
     closing_reply,
@@ -199,26 +198,17 @@ async def conduct(ctx: JobContext) -> None:
     ear.watch(ctx.room)
     if not await _wait_for_candidate(ctx.room):
         return
-    await _publish(ctx, {"type": "avatar"}, topic="interview", identities=["candidate"])
+    await _publish(ctx, {"type": "avatar", "state": "thinking"}, topic="interview", identities=["candidate"])
     recognizer, synthesizer = await asyncio.to_thread(speech_engines)
     recognizer.prompt = speech_prompt(list(brief.questions), brief.profile)
     hello = opening_line(brief.company_name, brief.job_title, brief.candidate_name)
     agenda = Agenda(questions=brief.questions)
     lines = [f"recruiter: {hello}"]
     quiet = 0
-    ack_index = 0
     pending = ""
     planner = create_fallback_manager()
     clips: dict[str, bytes] = {}
     slot: dict[str, rtc.AudioSource | None] = {"source": None}
-
-    async def hold() -> None:
-        ear.capture = False
-        try:
-            slot["source"] = await _play_clip(ctx, ear, slot["source"], clips[HOLD_LINE])
-        finally:
-            ear.capture = True
-            ear.interrupt.clear()
 
     try:
         greeting = await _deliver(ctx, ear, recognizer, synthesizer, hello, slot["source"], clips)
@@ -227,23 +217,19 @@ async def conduct(ctx: JobContext) -> None:
             await close_interview_from_agent(ctx.room.name)
             return
         pending = greeting.heard
-        warm_task = asyncio.create_task(_warm_clips(synthesizer))
-
-        async def ready_clips() -> dict[str, bytes]:
-            return await warm_task
 
         while True:
-            clips = await ready_clips()
             if pending:
                 heard = pending
                 pending = ""
             else:
-                heard = await _listen(ear, recognizer, lines[-1].removeprefix("recruiter: "), on_hold=hold)
+                heard = await _attend(ctx, ear, recognizer, lines[-1].removeprefix("recruiter: "))
             if heard is None:
                 await close_interview_from_agent(ctx.room.name)
                 break
             if not heard:
                 quiet += 1
+                await _mind(ctx, "waiting")
                 if quiet >= 3:
                     farewell = await _deliver(
                         ctx,
@@ -272,6 +258,7 @@ async def conduct(ctx: JobContext) -> None:
             quiet = 0
             lines.append(f"candidate: {heard}")
             await _record(ctx, "candidate", heard)
+            await _mind(ctx, "thinking")
             kind = await classify_turn(planner, question=open_checklist_item(agenda), heard=heard)
             if kind == "answer":
                 plan_task = asyncio.create_task(
@@ -286,26 +273,7 @@ async def conduct(ctx: JobContext) -> None:
                         turn_kind=kind,
                     )
                 )
-                reacted = await _deliver(
-                    ctx,
-                    ear,
-                    recognizer,
-                    synthesizer,
-                    acknowledgement(ack_index),
-                    slot["source"],
-                    clips,
-                )
-                ack_index += 1
-                slot["source"] = reacted.source
-                lines.append(f"recruiter: {acknowledgement(ack_index - 1)}")
-                if reacted.heard is None:
-                    await _drop(plan_task)
-                    await close_interview_from_agent(ctx.room.name)
-                    break
-                if reacted.heard:
-                    await _drop(plan_task)
-                    pending = reacted.heard
-                    continue
+                await asyncio.sleep(answer_beat())
                 planned = time.perf_counter()
                 utterance, agenda = await plan_task
                 logger.info("interviewer_planned seconds=%.1f", time.perf_counter() - planned)
@@ -332,18 +300,10 @@ async def conduct(ctx: JobContext) -> None:
                 pending = reply.heard
                 continue
             if utterance.finished:
-                await _finish(ctx, ear, recognizer, synthesizer, planner, brief, slot, clips, lines, hold)
+                await _finish(ctx, ear, recognizer, synthesizer, planner, brief, slot, clips, lines)
                 break
     finally:
         await ear.close()
-
-
-async def _drop(task: asyncio.Task[tuple[object, Agenda]]) -> None:
-    task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        return
 
 
 async def _finish(
@@ -356,9 +316,8 @@ async def _finish(
     slot: dict[str, rtc.AudioSource | None],
     clips: dict[str, bytes],
     lines: list[str],
-    hold: Callable[[], Awaitable[None]],
 ) -> None:
-    heard = await _listen(ear, recognizer, lines[-1].removeprefix("recruiter: "), on_hold=hold)
+    heard = await _attend(ctx, ear, recognizer, lines[-1].removeprefix("recruiter: "))
     if heard is None:
         await close_interview_from_agent(ctx.room.name)
         return
@@ -392,8 +351,8 @@ async def _listen(
     *,
     on_hold: Callable[[], Awaitable[None]] | None = None,
     idle_seconds: float = _QUIET_LIMIT,
-    silence_ms: int = 2200,
-    short_silence_ms: int | None = None,
+    silence_ms: int = 4800,
+    short_silence_ms: int | None = 3200,
 ) -> str | None:
     def fresh_gate() -> SpeechGate:
         return SpeechGate(silence_ms=silence_ms, short_silence_ms=short_silence_ms)
@@ -441,14 +400,6 @@ def _playback_pcm(audio: bytes, rate: int) -> bytes:
     return float_to_pcm16(resample_linear(pcm16_to_float(audio), rate, _PLAYBACK_RATE))
 
 
-async def _warm_clips(synthesizer: PiperSynthesizer) -> dict[str, bytes]:
-    clips: dict[str, bytes] = {}
-    for line in (acknowledgement(0), acknowledgement(1), acknowledgement(2), HOLD_LINE):
-        audio, rate = await asyncio.to_thread(synthesizer.synthesize, line)
-        clips[line] = _playback_pcm(audio, rate)
-    return clips
-
-
 async def _deliver(
     ctx: JobContext,
     ear: CandidateEar,
@@ -462,7 +413,8 @@ async def _deliver(
     if not playback.interrupted:
         await _record(ctx, "recruiter", text)
         return Delivery(playback.source, "", text)
-    heard = await _listen(
+    heard = await _attend(
+        ctx,
         ear,
         recognizer,
         playback.spoken or text,
@@ -481,7 +433,8 @@ async def _deliver(
         return Delivery(playback.source, "", text)
     rest = await _speak(ctx, ear, synthesizer, playback.remaining, playback.source, clips)
     if rest.interrupted:
-        heard_again = await _listen(
+        heard_again = await _attend(
+            ctx,
             ear,
             recognizer,
             rest.spoken or playback.remaining,
@@ -504,6 +457,7 @@ async def _speak(
     source: rtc.AudioSource | None,
     clips: dict[str, bytes],
 ) -> Playback:
+    await _mind(ctx, "speaking")
     sentences = list(spoken_sentences(text))
     source = await _ensure_source(ctx, source)
     if not sentences:
@@ -589,6 +543,33 @@ async def _record(ctx: JobContext, speaker: str, text: str) -> None:
         await save_spoken_line(ctx.room.name, speaker, str(notice["text"]), final=True)
     except Exception:
         logger.exception("interviewer_transcript_failed")
+
+
+async def _mind(ctx: JobContext, state: str) -> None:
+    await _publish(ctx, {"type": "avatar", "state": state}, topic="interview", identities=["candidate"])
+
+
+async def _attend(
+    ctx: JobContext,
+    ear: CandidateEar,
+    recognizer: WhisperRecognizer,
+    last_spoken: str,
+    *,
+    on_hold: Callable[[], Awaitable[None]] | None = None,
+    idle_seconds: float = _QUIET_LIMIT,
+    silence_ms: int = 4800,
+    short_silence_ms: int | None = 3200,
+) -> str | None:
+    await _mind(ctx, "listening")
+    return await _listen(
+        ear,
+        recognizer,
+        last_spoken,
+        on_hold=on_hold,
+        idle_seconds=idle_seconds,
+        silence_ms=silence_ms,
+        short_silence_ms=short_silence_ms,
+    )
 
 
 async def _publish(ctx: JobContext, payload: dict[str, object], *, topic: str, identities: list[str]) -> None:

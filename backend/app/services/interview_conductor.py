@@ -14,13 +14,12 @@ GENERAL_QUESTIONS = (
 )
 _ANSWER_CAP = 8
 _SAY_LIMIT = 500
-_ACKS = ("Okay.", "Right.", "Got it.")
 _NUDGES = (
     "Take your time. I am still here.",
     "Whenever you are ready.",
 )
-HOLD_LINE = "uh huh."
 QUIZ_LINE = "I am opening the short skill quiz now."
+_ANSWER_BEAT = 0.7
 logger = logging.getLogger(__name__)
 _SYSTEM = (
     "You are conducting a live video interview. You can see and hear the candidate. "
@@ -32,16 +31,18 @@ _SYSTEM = (
     "done (boolean), and quiz (boolean). "
     "The checklist is a private scoring rubric. Never read it aloud, never say 'the candidate', and never quote it. "
     "Ask one natural question a person would ask. Do not turn a rubric line into 'Do you demonstrate'. "
-    "Sound calm. Do not restate their sentence and do not start with 'So you'. "
+    "Sound calm. Do not start with 'So you', 'Okay', 'Right', or 'Got it'. "
+    "Name one concrete detail they just said, in your own words. Do not repeat their sentence. "
     "Do not repeat names, companies, or other proper nouns from their last sentence. "
     "If you mention their background, use the CV's wording, and do that only when it helps this question. "
     "If their answer conflicts with the CV, ask about that difference and set answered false. "
     "If the answer also covers a later checklist item, include that exact item in covered. "
-    "Look at what the candidate just said before you choose the next checklist item. "
-    "If it answers the open checklist question, set answered true. "
+    "The prompt ends with a turn kind. "
+    "When the kind is answer, the first sentence must use a specific thing they just said. "
+    "Set answered true only when that turn actually answers the open checklist question. "
     "Then ask one natural question about the next uncovered item, and put the open item in covered. "
-    "The prompt ends with a turn kind. Trust it. "
-    "When the kind is answer, react to what they actually said in a few words, set answered true, and ask the next checklist item. "
+    "If it does not answer the open question, set answered false, say what is still missing, and ask that same question again. "
+    "Do not move on because they spoke for a long time. "
     "When the kind is question or aside, set answered false and leave covered empty. "
     "Answer that in one short sentence. If you cannot know, say so. Do not repeat their question back. "
     "Then ask the same open checklist question again in your own words. "
@@ -191,8 +192,9 @@ def opening_line(company: str, job_title: str, candidate_name: str, first_questi
     )
 
 
-def acknowledgement(index: int) -> str:
-    return _ACKS[index % len(_ACKS)]
+def answer_beat() -> float:
+    """The pause after a real answer, before the next question."""
+    return _ANSWER_BEAT
 
 
 def silence_nudge(quiet_count: int) -> str:
@@ -270,12 +272,15 @@ def candidate_asked(text: str) -> bool:
     cleaned = " ".join(text.split()).strip()
     if not cleaned:
         return False
-    if cleaned.endswith("?"):
-        return True
     lowered = cleaned.lower().strip(".! ")
-    if lowered.startswith(_QUESTION_LEADS):
+    if any(phrase in lowered for phrase in _CALL_CHECKS):
         return True
-    return any(phrase in lowered for phrase in _CALL_CHECKS)
+    words = [word for word in lowered.replace("?", "").split() if word]
+    if cleaned.endswith("?") and len(words) <= 12:
+        return True
+    if len(words) <= 8 and lowered.startswith(_QUESTION_LEADS):
+        return True
+    return False
 
 
 def candidate_declined(text: str) -> bool:
@@ -300,11 +305,6 @@ def turn_is_answer(text: str) -> bool:
     if not cleaned or cleaned.lower() in _GREETINGS or thin_answer(text) or candidate_declined(text):
         return False
     return not candidate_asked(text)
-
-
-def should_acknowledge(text: str) -> bool:
-    """A real answer gets a short sound before the next question is ready."""
-    return turn_is_answer(text)
 
 
 def echoes_prompt(heard: str, spoken: str) -> bool:
@@ -341,6 +341,15 @@ def interruption_is_noise(heard: str, spoken: str) -> bool:
     return len(words) == 1 and words[0].lower() in _INTERRUPT_FILLERS
 
 
+def settled_turn_kind(ruled: TurnKind, judged: TurnKind | None) -> TurnKind:
+    """A finished answer stays an answer. The local model may only promote a question."""
+    if ruled == "answer":
+        return "answer"
+    if ruled == "question" and judged == "answer":
+        return "answer"
+    return ruled
+
+
 def _known_kind(value: str) -> TurnKind | None:
     if value == "answer" or value == "partial" or value == "question" or value == "aside" or value == "decline":
         return value
@@ -368,31 +377,28 @@ def open_checklist_item(agenda: Agenda) -> str:
 
 
 async def classify_turn(llm: FallbackLLMManager, *, question: str, heard: str) -> TurnKind:
-    """Ask the local model what this turn was. Keywords are the backup."""
+    """Label the turn. A finished answer stays an answer. The local model may only promote a question."""
     cleaned = " ".join(heard.split())
     if not cleaned:
         return "aside"
     ruled = keyword_turn_kind(cleaned)
-    if ruled in {"partial", "decline", "aside"}:
-        logger.info("interviewer_turn_kind kind=%s source=keywords", ruled)
-        return ruled
-    try:
-        response = await asyncio.wait_for(
-            llm.complete_local(
-                f"Open question:\n{question or '(none yet)'}\n\nCandidate said:\n{cleaned}",
-                system=_JUDGE_SYSTEM,
-                json_object=True,
-            ),
-            timeout=_JUDGE_SECONDS,
-        )
-        kind = _known_kind(_text(parse_json_object(response.content).get("kind")).lower())
-        if kind is not None:
-            logger.info("interviewer_turn_kind kind=%s source=local", kind)
-            return kind
-    except (JobGraphError, Exception) as exc:
-        logger.warning("interviewer_turn_judge_failed error_type=%s", type(exc).__name__)
-    logger.info("interviewer_turn_kind kind=%s source=keywords", ruled)
-    return ruled
+    judged: TurnKind | None = None
+    if ruled == "question":
+        try:
+            response = await asyncio.wait_for(
+                llm.complete_local(
+                    f"Open question:\n{question or '(none yet)'}\n\nCandidate said:\n{cleaned}",
+                    system=_JUDGE_SYSTEM,
+                    json_object=True,
+                ),
+                timeout=_JUDGE_SECONDS,
+            )
+            judged = _known_kind(_text(parse_json_object(response.content).get("kind")).lower())
+        except (JobGraphError, Exception) as exc:
+            logger.warning("interviewer_turn_judge_failed error_type=%s", type(exc).__name__)
+    kind = settled_turn_kind(ruled, judged)
+    logger.info("interviewer_turn_kind kind=%s source=%s", kind, "local" if judged == kind and judged is not None else "keywords")
+    return kind
 
 
 async def plan_reply(
@@ -424,17 +430,14 @@ async def plan_reply(
         response = await llm.complete_live(prompt, system=_SYSTEM)
         payload = parse_json_object(response.content)
         utterance = utterance_from_model(agenda, payload)
-        if kind == "answer" and "answered" in payload:
-            answered = payload.get("answered") is True
-        else:
-            answered = kind == "answer"
+        answered = kind == "answer" and payload.get("answered") is True
     except (JobGraphError, Exception) as exc:
         logger.warning("interviewer_plan_failed error_type=%s", type(exc).__name__)
         utterance = fallback_utterance(agenda, heard=heard, kind=kind)
-        answered = kind == "answer"
+        answered = kind == "answer" and utterance.answered
     if not utterance.say or _reads_rubric(utterance.say):
         utterance = fallback_utterance(agenda, heard=heard, kind=kind)
-        answered = kind == "answer" and bool(utterance.say)
+        answered = kind == "answer" and utterance.answered
     if kind != "answer":
         answered = False
     utterance = _shape_reply(agenda, utterance, heard=heard, answered=answered)
@@ -495,7 +498,7 @@ def fallback_utterance(agenda: Agenda, *, heard: str = "", kind: TurnKind | None
                 asks=current if current not in agenda.asked else "",
                 probe=current,
             )
-        return _advance(agenda, "Got it.")
+        return _stay(agenda, "That does not answer it yet.")
     if kind in {"question", "aside"} or candidate_asked(heard):
         current = _open_or_next(agenda)
         question = spoken_question(current)
@@ -522,7 +525,9 @@ def fallback_utterance(agenda: Agenda, *, heard: str = "", kind: TurnKind | None
             answered=False,
             asks=current if current not in agenda.asked else "",
         )
-    return _advance(agenda, "Got it.")
+    if _open_item(agenda):
+        return _stay(agenda, "That still leaves this question.")
+    return _advance(agenda, "")
 
 
 def spoken_limit(text: str, max_chars: int = _SAY_LIMIT) -> str:
@@ -542,6 +547,20 @@ def _closing() -> Utterance:
         covered=(),
         finished=True,
         offer_quiz=True,
+    )
+
+
+def _stay(agenda: Agenda, lead: str) -> Utterance:
+    current = _open_or_next(agenda)
+    question = spoken_question(current) if current else ""
+    say = f"{lead} {question}".strip()
+    return Utterance(
+        say=say,
+        covered=(),
+        finished=False,
+        offer_quiz=False,
+        answered=False,
+        asks=current if current and current not in agenda.asked else "",
     )
 
 
@@ -594,6 +613,18 @@ _FIRST_PERSON = re.compile(r"\b(i|i['’]m|i['’]ve|i['’]ll|i['’]d|my)\b", 
 def _slips_into_first_person(say: str) -> bool:
     """True when the reply talks as if the interviewer did the candidate's work."""
     return _FIRST_PERSON.search(say) is not None
+
+
+def _drop_reaction(say: str) -> str:
+    cleaned = say.strip()
+    lowered = cleaned.lower()
+    for lead in ("okay.", "okay,", "ok.", "ok,", "right.", "right,", "got it.", "got it,", "uh huh.", "uh huh,"):
+        if lowered.startswith(lead):
+            cleaned = cleaned[len(lead) :].strip()
+            lowered = cleaned.lower()
+    if not cleaned:
+        return ""
+    return cleaned[:1].upper() + cleaned[1:]
 
 
 def _drop_ok_so(say: str) -> str:
@@ -708,11 +739,22 @@ def _shape_reply(agenda: Agenda, utterance: Utterance, *, heard: str, answered: 
     if not nxt:
         return _closing()
     question = spoken_question(nxt)
-    say = _drop_ok_so(utterance.say or "")
+    say = _drop_reaction(_drop_ok_so(utterance.say or ""))
     if denies_the_call(say):
         say = _aside_reply(heard) if _about_the_call(heard) else "Yes. I can see you."
     if not say or _reads_rubric(say) or copies_candidate(say, heard) or _slips_into_first_person(say):
-        say = f"Got it. {question}"
+        current = _open_or_next(agenda)
+        same = spoken_question(current) if current else question
+        return Utterance(
+            say=same,
+            covered=(),
+            finished=False,
+            offer_quiz=False,
+            answered=False,
+            asks=current if current and current not in agenda.asked else "",
+        )
+    if question.lower() not in say.lower() and not say.rstrip().endswith("?"):
+        say = f"{say.rstrip()} {question}"
     return Utterance(say=say, covered=extra, finished=False, offer_quiz=False, answered=True, asks=nxt)
 
 

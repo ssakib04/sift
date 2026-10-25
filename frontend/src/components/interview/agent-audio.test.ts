@@ -1,12 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import {
-  avatarPresentation,
-  elementMuted,
-  isAgentAudio,
-  releaseAvatar,
-  shouldHandAudioToAvatar,
-} from "./agent-audio.ts";
+import { blendField, isAgentAudio, presenceCaption, presenceField, presenceMood } from "./agent-audio.ts";
 
 test("agent audio is the remote track that is not the candidate or the recruiter", () => {
   assert.equal(isAgentAudio("sift-interviewer", "audio"), true);
@@ -16,47 +10,32 @@ test("agent audio is the remote track that is not the candidate or the recruiter
   assert.equal(isAgentAudio("sift-interviewer", "video"), false);
 });
 
-test("the still portrait is used when the scene cannot run", () => {
-  const ready = { webgl: true, reducedMotion: false, modelAvailable: true, failed: false };
-  assert.equal(avatarPresentation(ready), "scene");
-  assert.equal(avatarPresentation({ ...ready, webgl: false }), "portrait");
-  assert.equal(avatarPresentation({ ...ready, reducedMotion: true }), "portrait");
-  assert.equal(avatarPresentation({ ...ready, modelAvailable: false }), "portrait");
-  assert.equal(avatarPresentation({ ...ready, failed: true }), "portrait");
+test("her voice pushes the network outward and a quiet mood draws it inward", () => {
+  const listening = presenceField("listening", 0, false);
+  const speaking = presenceField("listening", 0.8, false);
+  const thinking = presenceField("thinking", 0, false);
+  const waiting = presenceField("waiting", 0, false);
+  const still = presenceField("speaking", 0.8, true);
+  assert.equal(listening.mood, "listening");
+  assert.ok(listening.flow < 0);
+  assert.equal(speaking.mood, "speaking");
+  assert.ok(speaking.flow > 0);
+  assert.ok(speaking.energy > listening.energy);
+  assert.ok(thinking.gather > listening.gather);
+  assert.ok(thinking.flow < 0);
+  assert.ok(waiting.energy < listening.energy);
+  assert.equal(still.drift, 0);
+  assert.equal(still.mood, "speaking");
 });
 
-test("the audio element stays audible until the scene owns the agent track", () => {
-  assert.equal(
-    shouldHandAudioToAvatar({ presentation: "scene", sceneReady: true, hasAgentAudio: true }),
-    true,
-  );
-  assert.equal(
-    shouldHandAudioToAvatar({ presentation: "scene", sceneReady: false, hasAgentAudio: true }),
-    false,
-  );
-  assert.equal(
-    shouldHandAudioToAvatar({ presentation: "portrait", sceneReady: true, hasAgentAudio: true }),
-    false,
-  );
-  assert.equal(
-    shouldHandAudioToAvatar({ presentation: "scene", sceneReady: true, hasAgentAudio: false }),
-    false,
-  );
-  assert.equal(elementMuted("avatar"), true);
-  assert.equal(elementMuted("element"), false);
-});
-
-test("releasing the scene detaches the stream before disposing it and returns audio to the element", () => {
-  const calls: string[] = [];
-  const owner = releaseAvatar({
-    detachStream() {
-      calls.push("detach");
-    },
-    dispose() {
-      calls.push("dispose");
-    },
-  });
-  assert.deepEqual(calls, ["detach", "dispose"]);
-  assert.equal(owner, "element");
-  assert.equal(releaseAvatar(null), "element");
+test("a thinking signal stays thinking until her voice actually arrives", () => {
+  assert.equal(presenceMood("thinking"), "thinking");
+  assert.equal(presenceMood("later"), "listening");
+  assert.equal(presenceField("thinking", 0, false, "thinking").mood, "thinking");
+  assert.equal(presenceField("speaking", 0, false).mood, "speaking");
+  assert.equal(presenceCaption("listening"), "I'm listening");
+  const calm = presenceField("waiting", 0, false);
+  const stirred = blendField(calm, presenceField("speaking", 0.4, false), 0.5);
+  assert.ok(stirred.energy > calm.energy);
+  assert.equal(stirred.mood, "speaking");
 });
