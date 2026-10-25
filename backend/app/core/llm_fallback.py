@@ -80,12 +80,21 @@ class FallbackLLMManager:
             return LLMResponse(content=content, tier=tier, fallback_used=index > 0)
         raise LLMFallbackExhaustedError(failures)
 
-    async def complete_local(self, prompt: str, *, system: str | None = None) -> LLMResponse:
+    async def complete_local(
+        self,
+        prompt: str,
+        *,
+        system: str | None = None,
+        json_object: bool = False,
+    ) -> LLMResponse:
         """Ask only the local Ollama model, without trying Claude or Gemini."""
         tier, provider = self._providers[-1]
         if tier is not LLMTier.OLLAMA:
             raise LLMProviderError("Local model is not configured")
-        content = await provider.complete(prompt, system=system)
+        if json_object and isinstance(provider, OllamaProvider):
+            content = await provider.complete_json(prompt, system=system)
+        else:
+            content = await provider.complete(prompt, system=system)
         return LLMResponse(content=content, tier=LLMTier.OLLAMA, fallback_used=False)
 
     async def complete_live(self, prompt: str, *, system: str | None = None) -> LLMResponse:
@@ -223,6 +232,31 @@ class OllamaProvider:
             response = await client.post(
                 f"{self._base_url}/api/chat",
                 json={"model": self._model, "messages": messages, "stream": False},
+            )
+            response.raise_for_status()
+            payload = response.json()
+        message = payload.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        if not isinstance(content, str) or not content:
+            raise LLMProviderError("Ollama returned no text content")
+        return content
+
+    async def complete_json(self, prompt: str, *, system: str | None = None) -> str:
+        """A short JSON object from the local model, for a live turn label."""
+        messages: list[dict[str, str]] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.post(
+                f"{self._base_url}/api/chat",
+                json={
+                    "model": self._model,
+                    "messages": messages,
+                    "stream": False,
+                    "format": "json",
+                    "options": {"temperature": 0, "num_predict": 24, "num_ctx": 512, "num_batch": 128},
+                },
             )
             response.raise_for_status()
             payload = response.json()

@@ -32,7 +32,13 @@ from app.schemas.interview import (
     StartInterviewRequest,
     TranscriptTurnRead,
 )
-from app.services.identification import IdentificationView, identify_frame, read_identification
+from app.services.identification import (
+    IdentificationView,
+    admit_candidate,
+    identify_frame,
+    read_identification,
+    record_face_consent,
+)
 from app.services.interview_practice import open_practice_session
 from app.services.interview_rooms import signal_hub
 from app.services.interview_rules import InterviewError
@@ -254,6 +260,7 @@ async def check_identity(
         concluded=view.concluded,
         sample_count=view.sample_count,
         sample_limit=view.sample_limit,
+        can_join=view.can_join,
     )
 
 
@@ -294,7 +301,38 @@ def _identification_read(view: IdentificationView) -> IdentificationRead:
         concluded=view.concluded,
         sample_count=view.sample_count,
         sample_limit=view.sample_limit,
+        required=view.required,
+        can_join=view.can_join,
+        admitted=view.admitted,
     )
+
+
+@router.post("/{session_id}/identification/consent", response_model=IdentificationRead)
+async def consent_identity(
+    session_id: UUID,
+    claims: SessionClaims = Depends(_current_claims),
+    db: AsyncSession = Depends(get_session),
+) -> IdentificationRead:
+    try:
+        _match(claims, session_id)
+        view = await record_face_consent(db, claims)
+    except InterviewError as exc:
+        raise _http(exc) from exc
+    return _identification_read(view)
+
+
+@router.post("/{session_id}/identification/admit", response_model=IdentificationRead)
+async def admit_identity(
+    session_id: UUID,
+    claims: SessionClaims = Depends(_current_claims),
+    db: AsyncSession = Depends(get_session),
+) -> IdentificationRead:
+    try:
+        _match(claims, session_id)
+        view = await admit_candidate(db, claims)
+    except InterviewError as exc:
+        raise _http(exc) from exc
+    return _identification_read(view)
 
 
 @router.post("/{session_id}/end", response_model=SessionStatusRead)

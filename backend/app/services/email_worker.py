@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings
 from app.core.llm_fallback import FallbackLLMManager
 from app.services.embeddings import Embedder
-from app.services.face_embed import create_face_embedder
+from app.services.face_embed import create_face_embedder, release_face_embedder
 from app.services.mailpit import Mailbox, MailAttachment
 from app.services.notices import ranking_notice_message, record_ranking_notice
 from app.services.ocr_service import InvalidCvError, validate_cv
@@ -165,6 +165,8 @@ async def ingest_inbox(
         await stop_progress(session, started, datetime.now(UTC))
         await session.commit()
         raise
+    finally:
+        release_face_embedder()
 
 
 async def _take_cv(

@@ -223,6 +223,7 @@ class InterviewSession(Base):
     copilot_question: Mapped[str] = mapped_column(Text, default="", server_default="")
     copilot_turn_count: Mapped[int] = mapped_column(Integer, default=-1, server_default="-1")
     biometric_consented_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    face_admitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     conductor: Mapped[str] = mapped_column(String(16), default="", server_default="")
     scheduled_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     scheduled_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

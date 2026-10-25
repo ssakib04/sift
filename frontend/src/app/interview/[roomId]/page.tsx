@@ -1,7 +1,7 @@
 ﻿"use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 
 import { IdentityPanel } from "@/components/interview/identity-panel";
@@ -9,9 +9,9 @@ import { InCallCopilot } from "@/components/interview/in-call-copilot";
 import { LiveTranscript } from "@/components/interview/live-transcript";
 import { McqQuizModal } from "@/components/interview/mcq-quiz-modal";
 import { VideoRoom } from "@/components/interview/video-room";
+import { buttonClass } from "@/components/ui/button";
 import {
   CopilotAnswer,
-  IdentificationAck,
   Identification,
   InterviewCopilot,
   InterviewDetail,
@@ -44,11 +44,7 @@ export default function InterviewPage() {
   const [rail, setRail] = useState<"transcript" | "questions" | "identity">("transcript");
   const [quizOpen, setQuizOpen] = useState(false);
   const [identification, setIdentification] = useState<Identification | null>(null);
-  const [faceConsent, setFaceConsent] = useState(false);
-  const [allowingFace, setAllowingFace] = useState(false);
-  const [faceDone, setFaceDone] = useState(false);
-  const sendingFrame = useRef(false);
-  const faceDoneRef = useRef(false);
+  const [admitting, setAdmitting] = useState(false);
 
   const onConnection = useCallback((state: string) => {
     setConnection(state);
@@ -155,31 +151,6 @@ export default function InterviewPage() {
     };
   }, [closed, detail?.status, role, roomId, token]);
 
-  const sendFrame = useCallback(
-    async (imageBase64: string) => {
-      if (sendingFrame.current || faceDoneRef.current) {
-        return;
-      }
-      sendingFrame.current = true;
-      try {
-        const ack = await apiRequest<IdentificationAck>(`/api/v1/interview-sessions/${roomId}/identification`, {
-          method: "POST",
-          headers: { ...bearer(token), "Content-Type": "application/json" },
-          body: JSON.stringify({ image_base64: imageBase64 }),
-        });
-        if (ack.concluded) {
-          faceDoneRef.current = true;
-          setFaceDone(true);
-        }
-      } catch {
-        return;
-      } finally {
-        sendingFrame.current = false;
-      }
-    },
-    [roomId, token],
-  );
-
   useEffect(() => {
     if (role !== "recruiter" || !token || closed || detail?.status === "ended" || identification?.concluded) {
       return;
@@ -207,20 +178,19 @@ export default function InterviewPage() {
     };
   }, [closed, detail?.status, identification?.concluded, role, roomId, token]);
 
-  async function allowFaceCheck() {
-    setAllowingFace(true);
+  async function admitCandidate() {
+    setAdmitting(true);
     try {
-      await apiRequest(`/api/v1/interview-sessions/${roomId}/start`, {
+      const next = await apiRequest<Identification>(`/api/v1/interview-sessions/${roomId}/identification/admit`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...bearer(token) },
-        body: JSON.stringify({ consent: true, biometric_consent: true }),
+        headers: bearer(token),
       });
-      setDetail((current) => (current ? { ...current, biometric_consented_at: new Date().toISOString() } : current));
+      setIdentification(next);
       setMessage("");
     } catch (error: unknown) {
-      setMessage(error instanceof Error ? error.message : "Face identification could not be enabled.");
+      setMessage(error instanceof Error ? error.message : "The candidate could not be let in.");
     } finally {
-      setAllowingFace(false);
+      setAdmitting(false);
     }
   }
 
@@ -344,25 +314,11 @@ export default function InterviewPage() {
         <p className="text-sm text-mist">{ended ? "Ended" : connection || "Opening"}</p>
       </header>
       {message ? <p className="relative shrink-0 px-4 py-2 text-sm text-mist">{message}</p> : null}
-      {role === "candidate" && detail && !ended && !detail.biometric_consented_at ? (
-        <div className="shrink-0 space-y-2 border-b border-ivory/10 px-4 py-3">
-          <label className="flex items-start gap-3 text-sm text-mist">
-            <input
-              type="checkbox"
-              checked={faceConsent}
-              onChange={(event) => setFaceConsent(event.target.checked)}
-              className="mt-1"
-            />
-            I agree to a face check. A frame from my camera is compared with the photo on my CV and with other stored
-            candidate photos. The interviewer sees whether I match. If I do not agree, no identity is assumed.
-          </label>
-          <button
-            type="button"
-            disabled={!faceConsent || allowingFace}
-            onClick={() => void allowFaceCheck()}
-            className="text-sm text-ivory underline disabled:text-mist"
-          >
-            Allow face check
+      {role === "recruiter" && identification?.required && !identification.can_join ? (
+        <div className="relative shrink-0 space-y-2 border-b border-ivory/10 px-4 py-3">
+          <p className="text-sm text-ivory">{identification.message}</p>
+          <button type="button" disabled={admitting} onClick={() => void admitCandidate()} className={buttonClass()}>
+            Let them in
           </button>
         </div>
       ) : null}
@@ -376,8 +332,6 @@ export default function InterviewPage() {
               livekitUrl={livekit.url}
               livekitToken={livekit.token}
               record={detail?.status === "started"}
-              captureFrames={role === "candidate" && Boolean(detail?.biometric_consented_at) && !faceDone}
-              onFrame={sendFrame}
               onConnection={onConnection}
               onTranscript={role === "recruiter" && detail?.conductor !== "agent" ? hearTranscript : undefined}
               onHangup={hangUp}

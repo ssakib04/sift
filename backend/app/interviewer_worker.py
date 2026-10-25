@@ -22,12 +22,13 @@ from app.services.interview_conductor import (
     Agenda,
     acknowledgement,
     candidate_asked,
+    classify_turn,
     closing_reply,
     echoes_prompt,
     interruption_is_noise,
+    open_checklist_item,
     opening_line,
     plan_reply,
-    should_acknowledge,
     silence_nudge,
     spoken_sentences,
 )
@@ -54,7 +55,9 @@ server = AgentServer()
 _engines: tuple[WhisperRecognizer, PiperSynthesizer] | None = None
 _LISTEN_TIMEOUT = 90.0
 _QUIET_LIMIT = 12.0
-_INTERRUPT_WAIT = 1.5
+_INTERRUPT_WAIT = 5.0
+_INTERRUPT_SILENCE_MS = 2400
+_INTERRUPT_SHORT_SILENCE_MS = 1600
 
 
 @dataclass(frozen=True)
@@ -269,7 +272,8 @@ async def conduct(ctx: JobContext) -> None:
             quiet = 0
             lines.append(f"candidate: {heard}")
             await _record(ctx, "candidate", heard)
-            if should_acknowledge(heard):
+            kind = await classify_turn(planner, question=open_checklist_item(agenda), heard=heard)
+            if kind == "answer":
                 plan_task = asyncio.create_task(
                     plan_reply(
                         planner,
@@ -279,6 +283,7 @@ async def conduct(ctx: JobContext) -> None:
                         profile=brief.profile,
                         transcript="\n".join(lines),
                         heard=heard,
+                        turn_kind=kind,
                     )
                 )
                 reacted = await _deliver(
@@ -314,6 +319,7 @@ async def conduct(ctx: JobContext) -> None:
                     profile=brief.profile,
                     transcript="\n".join(lines),
                     heard=heard,
+                    turn_kind=kind,
                 )
                 logger.info("interviewer_planned seconds=%.1f", time.perf_counter() - planned)
             lines.append(f"recruiter: {utterance.say}")
@@ -386,8 +392,13 @@ async def _listen(
     *,
     on_hold: Callable[[], Awaitable[None]] | None = None,
     idle_seconds: float = _QUIET_LIMIT,
+    silence_ms: int = 2200,
+    short_silence_ms: int | None = None,
 ) -> str | None:
-    gate = SpeechGate()
+    def fresh_gate() -> SpeechGate:
+        return SpeechGate(silence_ms=silence_ms, short_silence_ms=short_silence_ms)
+
+    gate = fresh_gate()
     started = time.perf_counter()
     while True:
         try:
@@ -417,7 +428,7 @@ async def _listen(
         )
         if cleaned and not echoes_prompt(cleaned, last_spoken):
             return cleaned
-        gate = SpeechGate()
+        gate = fresh_gate()
         started = time.perf_counter()
 
 
@@ -451,7 +462,14 @@ async def _deliver(
     if not playback.interrupted:
         await _record(ctx, "recruiter", text)
         return Delivery(playback.source, "", text)
-    heard = await _listen(ear, recognizer, playback.spoken or text, idle_seconds=_INTERRUPT_WAIT)
+    heard = await _listen(
+        ear,
+        recognizer,
+        playback.spoken or text,
+        idle_seconds=_INTERRUPT_WAIT,
+        silence_ms=_INTERRUPT_SILENCE_MS,
+        short_silence_ms=_INTERRUPT_SHORT_SILENCE_MS,
+    )
     if heard is None:
         await _record(ctx, "recruiter", playback.spoken)
         return Delivery(playback.source, None, playback.spoken)
@@ -463,7 +481,14 @@ async def _deliver(
         return Delivery(playback.source, "", text)
     rest = await _speak(ctx, ear, synthesizer, playback.remaining, playback.source, clips)
     if rest.interrupted:
-        heard_again = await _listen(ear, recognizer, rest.spoken or playback.remaining, idle_seconds=_INTERRUPT_WAIT)
+        heard_again = await _listen(
+            ear,
+            recognizer,
+            rest.spoken or playback.remaining,
+            idle_seconds=_INTERRUPT_WAIT,
+            silence_ms=_INTERRUPT_SILENCE_MS,
+            short_silence_ms=_INTERRUPT_SHORT_SILENCE_MS,
+        )
         spoken = " ".join(part for part in (playback.spoken, rest.spoken) if part)
         await _record(ctx, "recruiter", spoken)
         return Delivery(rest.source, heard_again, spoken)

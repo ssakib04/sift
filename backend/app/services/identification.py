@@ -3,7 +3,7 @@
 import asyncio
 import logging
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -21,7 +21,7 @@ from app.models.candidate import (
     ScoreSnapshot,
 )
 from app.models.job import JobChecklistQuery, JobVersion
-from app.services.face_embed import FaceEmbedder, FaceSample, create_face_embedder
+from app.services.face_embed import FaceEmbedder, FaceSample, create_face_embedder, release_face_embedder
 from app.services.face_identity import (
     USABLE_TARGET,
     EnrolledFace,
@@ -66,6 +66,9 @@ class IdentificationView:
     concluded: bool = False
     sample_count: int = 0
     sample_limit: int = USABLE_TARGET
+    required: bool = False
+    can_join: bool = False
+    admitted: bool = False
 
 
 def store_candidate_profile(candidate_id: uuid.UUID, attributes: dict[str, object]) -> CandidateProfile:
@@ -106,6 +109,61 @@ def store_candidate_face(
     return face, ""
 
 
+def entry_allowed(*, required: bool, admitted: bool, status: str) -> bool:
+    """A stored CV face has to match, unless a recruiter has let the candidate in."""
+    if admitted or not required:
+        return True
+    return status == "confirmed"
+
+
+def candidate_gate_message(*, status: str, required: bool, allowed: bool) -> str:
+    """Tell the candidate the gate outcome without naming anyone else."""
+    if not required:
+        return ""
+    if allowed and status == "confirmed":
+        return "Your face matches the photo on your CV."
+    if allowed:
+        return "A recruiter let you in."
+    if status == "checking":
+        return "Hold still. Checking your face against the photo on your CV."
+    if status in {"pending", "consent_required"}:
+        return "A face check has to match the photo on your CV before you join."
+    return "This face does not match the photo on your CV. A recruiter can still let you in."
+
+
+def assert_face_window(status: str) -> None:
+    """The camera check runs before the call and can still be read once it has started."""
+    if status == "ended":
+        raise InterviewError("SESSION_ENDED", "This interview has already ended.", 409)
+    if status not in {"invited", "started"}:
+        raise InterviewError("SESSION_NOT_FOUND", "This interview session is not available.", 404)
+
+
+def with_gate(view: IdentificationView, *, required: bool, admitted: bool, audience: str) -> IdentificationView:
+    allowed = entry_allowed(required=required, admitted=admitted, status=view.status)
+    message = view.message
+    if audience == "candidate":
+        lobby = candidate_gate_message(status=view.status, required=required, allowed=allowed)
+        if lobby:
+            message = lobby
+    return replace(view, required=required, admitted=admitted, can_join=allowed, message=message)
+
+
+async def ensure_face_gate(db: AsyncSession, row: InterviewSession) -> None:
+    """Block the call until the CV face matches or a recruiter admits the candidate."""
+    face = await db.get(CandidateFace, row.candidate_id)
+    check = await db.get(FaceCheck, row.id)
+    status = check.status if check is not None and _finished(check) else ""
+    if entry_allowed(required=face is not None, admitted=row.face_admitted_at is not None, status=status):
+        release_face_embedder()
+        return
+    raise InterviewError(
+        "FACE_NOT_MATCHED",
+        "Your face has to match the photo on your CV before you join. A recruiter can still let you in.",
+        403,
+    )
+
+
 async def identify_frame(
     db: AsyncSession,
     settings: Settings,
@@ -120,11 +178,11 @@ async def identify_frame(
             "Face identification waits until the candidate agrees.",
             403,
         )
-    if row.status != "started":
-        raise InterviewError("SESSION_NOT_STARTED", "The interview has not started.", 409)
+    assert_face_window(row.status)
     existing = await db.get(FaceCheck, row.id)
     if existing is not None and _finished(existing):
-        return await _view_from_check(db, row, existing)
+        release_face_embedder()
+        return await _gated(db, row, await _view_from_check(db, row, existing), "candidate")
     try:
         raw = decode_frame(image_base64)
     except ValueError as exc:
@@ -152,26 +210,54 @@ async def identify_frame(
         await db.commit()
         invited_name = _display_name(row.candidate.full_name if row.candidate is not None else "")
         usable = sum(1 for item in samples if item.get("kind") == "face")
-        return _checking(invited_name, usable)
+        return await _gated(db, row, _checking(invited_name, usable), "candidate")
     decision = await _decision_from_step(db, settings, row.candidate_id, invited_embedding, step)
     _store_check(db, existing, row.id, stored_samples(samples), decision, done=True)
     await db.commit()
+    release_face_embedder()
     usable = sum(1 for item in samples if item.get("kind") == "face")
-    return await _view(db, row, decision, concluded=True, sample_count=usable)
+    return await _gated(db, row, await _view(db, row, decision, concluded=True, sample_count=usable), "candidate")
+
+
+async def record_face_consent(db: AsyncSession, claims: SessionClaims) -> IdentificationView:
+    """Remember the candidate's agreement before the call starts."""
+    assert_candidate(claims.role)
+    row = await _session(db, claims)
+    assert_face_window(row.status)
+    if row.biometric_consented_at is None:
+        row.biometric_consented_at = datetime.now(UTC)
+        await db.commit()
+    return await read_identification(db, claims)
+
+
+async def admit_candidate(db: AsyncSession, claims: SessionClaims) -> IdentificationView:
+    """Let the candidate join when the face check did not match."""
+    assert_recruiter(claims.role)
+    row = await _session(db, claims)
+    assert_face_window(row.status)
+    if row.face_admitted_at is None:
+        row.face_admitted_at = datetime.now(UTC)
+        await db.commit()
+    release_face_embedder()
+    return await read_identification(db, claims)
 
 
 async def read_identification(db: AsyncSession, claims: SessionClaims) -> IdentificationView:
-    assert_recruiter(claims.role)
+    if claims.role not in {"candidate", "recruiter"}:
+        raise InterviewError("INTERVIEW_FORBIDDEN", "This view is only available to the recruiter.", 403)
     row = await _session(db, claims)
     invited_name = _display_name(row.candidate.full_name if row.candidate is not None else "")
     if row.biometric_consented_at is None:
-        return _plain("consent_required", invited_name)
-    check = await db.get(FaceCheck, row.id)
-    if check is None:
-        return _plain("pending", invited_name)
-    if not _finished(check):
-        return _checking(invited_name, len(check.samples or []))
-    return await _view_from_check(db, row, check)
+        view = _plain("consent_required", invited_name)
+    else:
+        check = await db.get(FaceCheck, row.id)
+        if check is None:
+            view = _plain("pending", invited_name)
+        elif not _finished(check):
+            view = _checking(invited_name, len(check.samples or []))
+        else:
+            view = await _view_from_check(db, row, check)
+    return await _gated(db, row, view, claims.role)
 
 
 async def _view_from_check(db: AsyncSession, row: InterviewSession, check: FaceCheck) -> IdentificationView:
@@ -407,3 +493,18 @@ def _checking(invited_name: str, sample_count: int) -> IdentificationView:
 def _display_name(full_name: str) -> str:
     cleaned = full_name.strip()
     return cleaned or "Unnamed"
+
+
+async def _gated(
+    db: AsyncSession,
+    row: InterviewSession,
+    view: IdentificationView,
+    audience: str,
+) -> IdentificationView:
+    face = await db.get(CandidateFace, row.candidate_id)
+    return with_gate(
+        view,
+        required=face is not None,
+        admitted=row.face_admitted_at is not None,
+        audience=audience,
+    )

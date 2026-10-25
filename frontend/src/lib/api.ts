@@ -300,6 +300,7 @@ export type InviteRecord = {
   company_name: string;
   status: string;
   scheduled_label?: string;
+  face_check_required?: boolean;
 };
 
 export type ApplicantNotice = {
@@ -369,6 +370,7 @@ export type IdentificationAck = {
   concluded: boolean;
   sample_count: number;
   sample_limit: number;
+  can_join: boolean;
 };
 
 export type Identification = {
@@ -383,6 +385,9 @@ export type Identification = {
   concluded?: boolean;
   sample_count?: number;
   sample_limit?: number;
+  required?: boolean;
+  can_join?: boolean;
+  admitted?: boolean;
 };
 
 export type TranscriptTurn = {

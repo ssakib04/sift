@@ -200,7 +200,7 @@ class SpeechGate:
 class BargeMeter:
     """Notice when the candidate talks over the interviewer for long enough to interrupt."""
 
-    def __init__(self, sample_rate: int = 16000, threshold: float = 0.08, hold_ms: int = 250) -> None:
+    def __init__(self, sample_rate: int = 16000, threshold: float = 0.04, hold_ms: int = 200) -> None:
         self.sample_rate = sample_rate
         self.threshold = threshold
         self._hold_samples = sample_rate * hold_ms // 1000

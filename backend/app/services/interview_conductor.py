@@ -1,6 +1,8 @@
+import asyncio
 import logging
 import re
 from dataclasses import dataclass
+from typing import Literal
 
 from app.core.llm_fallback import FallbackLLMManager
 from app.graphs.job_creation_graph import JobGraphError, parse_json_object
@@ -38,7 +40,9 @@ _SYSTEM = (
     "Look at what the candidate just said before you choose the next checklist item. "
     "If it answers the open checklist question, set answered true. "
     "Then ask one natural question about the next uncovered item, and put the open item in covered. "
-    "If it is a question, a request, or about the camera, microphone, or anything else, set answered false and leave covered empty. "
+    "The prompt ends with a turn kind. Trust it. "
+    "When the kind is answer, react to what they actually said in a few words, set answered true, and ask the next checklist item. "
+    "When the kind is question or aside, set answered false and leave covered empty. "
     "Answer that in one short sentence. If you cannot know, say so. Do not repeat their question back. "
     "Then ask the same open checklist question again in your own words. "
     "Do not start a new checklist item on that turn. "
@@ -313,12 +317,82 @@ def echoes_prompt(heard: str, spoken: str) -> bool:
     return overlap / len(heard_words) >= 0.75
 
 
+_INTERRUPT_FILLERS = frozenset({"uh", "um", "hmm", "mm", "ah", "er", "hm"})
+TurnKind = Literal["answer", "partial", "question", "aside", "decline"]
+_TURN_KINDS = frozenset({"answer", "partial", "question", "aside", "decline"})
+_JUDGE_SYSTEM = (
+    "You label one interview turn. Return only a JSON object with the key kind. "
+    "kind is one of answer, partial, question, aside, decline. "
+    "answer: they addressed the open question with something specific. "
+    "partial: yes, no, or a fragment with no example. "
+    "question: they asked the interviewer something, even inside a longer sentence. "
+    "aside: camera, microphone, greeting, or a comment that is not the answer. "
+    "decline: they would rather not answer."
+)
+_JUDGE_SECONDS = 16.0
+
+
 def interruption_is_noise(heard: str, spoken: str) -> bool:
-    """True when talk-over was a cough, an echo, or too short to be a turn."""
+    """True when talk-over was silence, an echo, or a single filler sound."""
     cleaned = " ".join(heard.split()).strip()
     if not cleaned or echoes_prompt(cleaned, spoken):
         return True
-    return len(cleaned.strip(".!?").split()) < 3
+    words = [word.strip(".,!?") for word in cleaned.split() if word.strip(".,!?")]
+    return len(words) == 1 and words[0].lower() in _INTERRUPT_FILLERS
+
+
+def _known_kind(value: str) -> TurnKind | None:
+    if value == "answer" or value == "partial" or value == "question" or value == "aside" or value == "decline":
+        return value
+    return None
+
+
+def keyword_turn_kind(heard: str) -> TurnKind:
+    """The label used when the local judge is missing or returns nothing usable."""
+    cleaned = " ".join(heard.split())
+    if not cleaned or cleaned.lower().strip(".! ") in _GREETINGS:
+        return "aside"
+    if candidate_declined(cleaned):
+        return "decline"
+    if thin_answer(cleaned):
+        return "partial"
+    if candidate_asked(cleaned):
+        return "question"
+    if not turn_is_answer(cleaned):
+        return "aside"
+    return "answer"
+
+
+def open_checklist_item(agenda: Agenda) -> str:
+    return _open_or_next(agenda)
+
+
+async def classify_turn(llm: FallbackLLMManager, *, question: str, heard: str) -> TurnKind:
+    """Ask the local model what this turn was. Keywords are the backup."""
+    cleaned = " ".join(heard.split())
+    if not cleaned:
+        return "aside"
+    ruled = keyword_turn_kind(cleaned)
+    if ruled in {"partial", "decline", "aside"}:
+        logger.info("interviewer_turn_kind kind=%s source=keywords", ruled)
+        return ruled
+    try:
+        response = await asyncio.wait_for(
+            llm.complete_local(
+                f"Open question:\n{question or '(none yet)'}\n\nCandidate said:\n{cleaned}",
+                system=_JUDGE_SYSTEM,
+                json_object=True,
+            ),
+            timeout=_JUDGE_SECONDS,
+        )
+        kind = _known_kind(_text(parse_json_object(response.content).get("kind")).lower())
+        if kind is not None:
+            logger.info("interviewer_turn_kind kind=%s source=local", kind)
+            return kind
+    except (JobGraphError, Exception) as exc:
+        logger.warning("interviewer_turn_judge_failed error_type=%s", type(exc).__name__)
+    logger.info("interviewer_turn_kind kind=%s source=keywords", ruled)
+    return ruled
 
 
 async def plan_reply(
@@ -330,28 +404,40 @@ async def plan_reply(
     profile: str,
     transcript: str,
     heard: str,
+    turn_kind: TurnKind | None = None,
 ) -> tuple[Utterance, Agenda]:
     """Answer what was just said, then continue the checklist only after a real answer."""
     if agenda.answers >= answer_limit(agenda) or not _remaining(agenda):
         utterance = _closing()
         return utterance, _apply(agenda, utterance)
-    if heard.strip() and (candidate_declined(heard) or thin_answer(heard)):
-        utterance = fallback_utterance(agenda, heard=heard)
+    kind = turn_kind if turn_kind in _TURN_KINDS else await classify_turn(
+        llm,
+        question=open_checklist_item(agenda),
+        heard=heard,
+    )
+    if kind in {"decline", "partial"}:
+        utterance = fallback_utterance(agenda, heard=heard, kind=kind)
         return utterance, _apply(agenda, utterance)
     prompt = _prompt(agenda, company=company, job_title=job_title, profile=profile, transcript=transcript, heard=heard)
+    prompt = f"{prompt}\n\nTurn kind: {kind}"
     try:
         response = await llm.complete_live(prompt, system=_SYSTEM)
         payload = parse_json_object(response.content)
         utterance = utterance_from_model(agenda, payload)
-        answered = _model_answered(payload, heard)
+        if kind == "answer" and "answered" in payload:
+            answered = payload.get("answered") is True
+        else:
+            answered = kind == "answer"
     except (JobGraphError, Exception) as exc:
         logger.warning("interviewer_plan_failed error_type=%s", type(exc).__name__)
-        utterance = fallback_utterance(agenda, heard=heard)
-        answered = turn_is_answer(heard)
+        utterance = fallback_utterance(agenda, heard=heard, kind=kind)
+        answered = kind == "answer"
     if not utterance.say or _reads_rubric(utterance.say):
-        utterance = fallback_utterance(agenda, heard=heard)
-        answered = turn_is_answer(heard) and bool(utterance.say) and not candidate_asked(heard)
-    utterance = _shape_reply(agenda, utterance, heard=heard, answered=answered and turn_is_answer(heard))
+        utterance = fallback_utterance(agenda, heard=heard, kind=kind)
+        answered = kind == "answer" and bool(utterance.say)
+    if kind != "answer":
+        answered = False
+    utterance = _shape_reply(agenda, utterance, heard=heard, answered=answered)
     return utterance, _apply(agenda, utterance)
 
 
@@ -391,13 +477,13 @@ def utterance_from_model(agenda: Agenda, payload: dict[str, object]) -> Utteranc
     return Utterance(say=say, covered=covered, finished=False, offer_quiz=payload.get("quiz") is True)
 
 
-def fallback_utterance(agenda: Agenda, *, heard: str = "") -> Utterance:
+def fallback_utterance(agenda: Agenda, *, heard: str = "", kind: TurnKind | None = None) -> Utterance:
     """A local line when the model misses. A question does not skip to the next rubric item."""
     if agenda.answers >= answer_limit(agenda) or not _remaining(agenda):
         return _closing()
-    if candidate_declined(heard):
+    if kind == "decline" or (kind is None and candidate_declined(heard)):
         return _advance(agenda, "That's all right.")
-    if thin_answer(heard):
+    if kind == "partial" or (kind is None and thin_answer(heard)):
         current = _open_or_next(agenda)
         if current and current not in agenda.probed:
             return Utterance(
@@ -410,10 +496,16 @@ def fallback_utterance(agenda: Agenda, *, heard: str = "") -> Utterance:
                 probe=current,
             )
         return _advance(agenda, "Got it.")
-    if candidate_asked(heard):
+    if kind in {"question", "aside"} or candidate_asked(heard):
         current = _open_or_next(agenda)
+        question = spoken_question(current)
+        greeting = heard.lower().strip(".! ") in _GREETINGS
+        if greeting and not candidate_asked(heard):
+            say = question
+        else:
+            say = f"{_aside_reply(heard)} {question}".strip()
         return Utterance(
-            say=f"{_aside_reply(heard)} {spoken_question(current)}".strip(),
+            say=say,
             covered=(),
             finished=False,
             offer_quiz=False,
@@ -573,14 +665,6 @@ def _after_answer(agenda: Agenda) -> str:
             continue
         return item
     return ""
-
-
-def _model_answered(payload: dict[str, object], heard: str) -> bool:
-    if not turn_is_answer(heard):
-        return False
-    if "answered" in payload:
-        return payload.get("answered") is True
-    return True
 
 
 def _shape_reply(agenda: Agenda, utterance: Utterance, *, heard: str, answered: bool) -> Utterance:

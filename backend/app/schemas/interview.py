@@ -71,6 +71,7 @@ class IdentificationAck(BaseModel):
     concluded: bool = False
     sample_count: int = 0
     sample_limit: int = 8
+    can_join: bool = False
 
 
 class IdentificationRead(BaseModel):
@@ -85,6 +86,9 @@ class IdentificationRead(BaseModel):
     concluded: bool = False
     sample_count: int = 0
     sample_limit: int = 8
+    required: bool = False
+    can_join: bool = False
+    admitted: bool = False
 
 
 class SessionStatusRead(BaseModel):

@@ -361,6 +361,7 @@ async def resolve_invite(session: AsyncSession, token: str, settings: Settings) 
         .options(
             selectinload(MagicLink.candidate).selectinload(Candidate.version).selectinload(JobVersion.job),
             selectinload(MagicLink.candidate).selectinload(Candidate.interview_session),
+            selectinload(MagicLink.candidate).selectinload(Candidate.face),
         )
     )
     link = await session.scalar(statement)
@@ -378,6 +379,7 @@ async def resolve_invite(session: AsyncSession, token: str, settings: Settings) 
             interview.scheduled_start if interview is not None else None,
             interview.scheduled_end if interview is not None else None,
         ),
+        face_check_required=link.candidate.face is not None,
     )
 
 

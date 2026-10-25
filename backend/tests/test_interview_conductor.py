@@ -420,6 +420,122 @@ def test_a_cough_is_noise_and_a_sentence_keeps_the_turn() -> None:
     assert interruption_is_noise("", spoken) is True
     assert interruption_is_noise(spoken, spoken) is True
     assert interruption_is_noise("I write unit tests.", spoken) is False
+    assert interruption_is_noise("wait", spoken) is False
+    assert interruption_is_noise("hold on", spoken) is False
+
+
+class _Judge:
+    def __init__(self, kind: str, say: str) -> None:
+        self.kind = kind
+        self.say = say
+        self.calls = 0
+
+    async def complete(self, prompt: str, *, system: str | None = None) -> str:
+        del prompt
+        self.calls += 1
+        if system and "label one interview turn" in system:
+            return self.kind
+        return self.say
+
+
+@pytest.mark.asyncio
+async def test_a_local_question_label_keeps_the_same_checklist_item() -> None:
+    agenda = Agenda(
+        questions=("Can you write tests?", "Can you review a pull request?"),
+        asked=("Can you write tests?",),
+    )
+    provider = _Judge(
+        '{"kind": "question"}',
+        '{"say": "About twelve people.", "answered": true, "covered": ["Can you write tests?"], "done": false, "quiz": false}',
+    )
+    utterance, advanced = await plan_reply(
+        FallbackLLMManager(provider, provider, provider),
+        agenda,
+        company="Sift",
+        job_title="Backend engineer",
+        profile="",
+        transcript="recruiter: Can you write tests?",
+        heard="I led the billing migration for two years and I want the team size",
+    )
+    assert "twelve" in utterance.say.lower()
+    assert "Can you write tests?" in utterance.say
+    assert advanced.covered == ()
+    assert advanced.answers == 0
+    assert provider.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_a_local_partial_label_asks_for_an_example() -> None:
+    agenda = Agenda(
+        questions=("Can you write tests?", "Can you review a pull request?"),
+        asked=("Can you write tests?",),
+    )
+    provider = _Judge(
+        '{"kind": "partial"}',
+        '{"say": "Next question.", "answered": true, "covered": ["Can you write tests?"], "done": false, "quiz": false}',
+    )
+    utterance, advanced = await plan_reply(
+        FallbackLLMManager(provider, provider, provider),
+        agenda,
+        company="Sift",
+        job_title="Backend engineer",
+        profile="",
+        transcript="",
+        heard="I have done some testing in a few services.",
+    )
+    assert utterance.say == "Could you walk me through an example?"
+    assert advanced.answers == 0
+    assert advanced.probed == ("Can you write tests?",)
+    assert provider.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_a_local_decline_label_moves_on() -> None:
+    agenda = Agenda(
+        questions=("Can you write tests?", "Can you review a pull request?"),
+        asked=("Can you write tests?",),
+    )
+    provider = _Judge(
+        '{"kind": "decline"}',
+        '{"say": "Tell me more.", "answered": false, "covered": [], "done": false, "quiz": false}',
+    )
+    utterance, advanced = await plan_reply(
+        FallbackLLMManager(provider, provider, provider),
+        agenda,
+        company="Sift",
+        job_title="Backend engineer",
+        profile="",
+        transcript="",
+        heard="I led the billing migration for two years.",
+    )
+    assert utterance.say.startswith("That's all right.")
+    assert "Can you review a pull request?" in utterance.say
+    assert "Can you write tests?" in advanced.covered
+    assert provider.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_a_broken_local_label_uses_the_keyword_rules() -> None:
+    agenda = Agenda(
+        questions=("Can you write tests?", "Can you review a pull request?"),
+        asked=("Can you write tests?",),
+    )
+    provider = _Judge(
+        "not json",
+        '{"say": "Which database did you use?", "answered": true, "covered": [], "done": false, "quiz": false}',
+    )
+    utterance, advanced = await plan_reply(
+        FallbackLLMManager(provider, provider, provider),
+        agenda,
+        company="Sift",
+        job_title="Backend engineer",
+        profile="",
+        transcript="",
+        heard="I write tests for every service I ship.",
+    )
+    assert utterance.say == "Which database did you use?"
+    assert "Can you write tests?" in advanced.covered
+    assert provider.calls == 2
 
 
 def test_silence_nudges_are_not_the_same_line() -> None:

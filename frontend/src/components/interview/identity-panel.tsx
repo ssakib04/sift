@@ -13,6 +13,7 @@ export function IdentityPanel({ identification }: { identification: Identificati
   return (
     <div className="space-y-3">
       <p className="text-sm text-ivory">{identification.message}</p>
+      {identification.admitted ? <p className="text-sm text-mist">A recruiter let this candidate in.</p> : null}
       {profile ? (
         <div className="space-y-2">
           <p className="text-sm font-medium text-ivory">{profile.full_name}</p>

@@ -87,3 +87,4 @@ class InviteRead(BaseModel):
     status: str
     created_at: datetime
     scheduled_label: str = ""
+    face_check_required: bool = False

@@ -5,7 +5,7 @@ import pytest
 
 from app.core.config import Settings
 from app.models.candidate import FACE_DIMENSIONS
-from app.services.face_embed import HashingFaceEmbedder, create_face_embedder
+from app.services.face_embed import HashingFaceEmbedder, InsightFaceEmbedder, create_face_embedder, release_face_embedder
 from app.services.face_identity import (
     USABLE_TARGET,
     EnrolledFace,
@@ -19,7 +19,14 @@ from app.services.face_identity import (
     probe_areas,
     profile_from_attributes,
 )
-from app.services.identification import store_candidate_profile
+from app.services.identification import (
+    IdentificationView,
+    assert_face_window,
+    candidate_gate_message,
+    entry_allowed,
+    store_candidate_profile,
+    with_gate,
+)
 from app.services.interview_rules import InterviewError, assert_candidate
 
 
@@ -296,3 +303,80 @@ def test_only_the_candidate_camera_can_be_checked() -> None:
     with pytest.raises(InterviewError) as exc:
         assert_candidate("recruiter")
     assert exc.value.code == "INTERVIEW_FORBIDDEN"
+
+
+def test_a_stored_face_blocks_entry_until_it_matches_or_a_recruiter_admits() -> None:
+    assert entry_allowed(required=False, admitted=False, status="") is True
+    assert entry_allowed(required=True, admitted=False, status="confirmed") is True
+    assert entry_allowed(required=True, admitted=True, status="no_match") is True
+    assert entry_allowed(required=True, admitted=False, status="no_match") is False
+    assert entry_allowed(required=True, admitted=False, status="other_candidate") is False
+    assert entry_allowed(required=True, admitted=False, status="checking") is False
+    assert entry_allowed(required=True, admitted=False, status="") is False
+
+
+def test_the_candidate_hears_the_gate_without_another_persons_name() -> None:
+    assert candidate_gate_message(status="no_match", required=False, allowed=True) == ""
+    assert "photo on your CV" in candidate_gate_message(status="confirmed", required=True, allowed=True)
+    assert candidate_gate_message(status="no_match", required=True, allowed=True) == "A recruiter let you in."
+    blocked = candidate_gate_message(status="other_candidate", required=True, allowed=False)
+    assert "does not match" in blocked
+    assert "Ada" not in blocked
+    view = with_gate(
+        IdentificationView(
+            status="other_candidate",
+            message="This face does not match Ada. It matches Bea.",
+            similarity=0.9,
+            invited_similarity=0.1,
+            invited_name="Ada",
+            matched_name="Bea",
+            hint_name=None,
+            profile=None,
+            concluded=True,
+        ),
+        required=True,
+        admitted=False,
+        audience="candidate",
+    )
+    assert view.can_join is False
+    assert "Bea" not in view.message
+    recruiter = with_gate(
+        IdentificationView(
+            status="other_candidate",
+            message="This face does not match Ada. It matches Bea.",
+            similarity=0.9,
+            invited_similarity=0.1,
+            invited_name="Ada",
+            matched_name="Bea",
+            hint_name=None,
+            profile=None,
+            concluded=True,
+        ),
+        required=True,
+        admitted=False,
+        audience="recruiter",
+    )
+    assert recruiter.message == "This face does not match Ada. It matches Bea."
+    assert recruiter.required is True
+
+
+def test_the_face_check_is_allowed_before_the_interview_starts() -> None:
+    assert_face_window("invited")
+    assert_face_window("started")
+    with pytest.raises(InterviewError) as ended:
+        assert_face_window("ended")
+    assert ended.value.code == "SESSION_ENDED"
+
+
+def test_releasing_the_face_model_drops_it_from_memory() -> None:
+    from app.services import face_embed
+
+    previous = dict(face_embed._insight)
+    embedder = InsightFaceEmbedder("buffalo_l", "/tmp/sift-face-release")
+    embedder._app = object()
+    face_embed._insight[("buffalo_l", "/tmp/sift-face-release")] = embedder
+    release_face_embedder()
+    assert embedder._app is None
+    assert ("buffalo_l", "/tmp/sift-face-release") not in face_embed._insight
+    face_embed._insight.clear()
+    face_embed._insight.update(previous)

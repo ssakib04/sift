@@ -25,6 +25,7 @@ from app.services.cv_claims import verify_stored_claims
 from app.services.interview_quality import store_interview_quality
 from app.services.interview_score import store_interview_score
 from app.services.interview_analysis import AnalysisDraft, draft_for_transcript
+from app.services.identification import ensure_face_gate
 from app.services.interview_livekit import dispatch_room_agent, issue_livekit_token, room_has_recruiter
 from app.services.interview_transcript import TranscriptWrite, accepted_speaker, spoken_window, transcript_write
 from app.services.interview_copilot import (
@@ -155,6 +156,8 @@ async def start_interview(
     biometric_consent: bool = False,
 ) -> str:
     row, _title, _job_id = await _require(db, claims)
+    if claims.role == "candidate":
+        await ensure_face_gate(db, row)
     previous = row.status
     clock = start_clock(_clock(row), consent=consent, now=datetime.now(UTC))
     _apply_clock(row, clock)

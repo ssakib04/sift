@@ -1,5 +1,7 @@
 # Tertiary model, after the stack is up:
 # docker compose exec ollama ollama pull llama3.2
+# The live turn label uses llama3.2:1b. The 3B model is killed inside Docker's memory cap.
+# docker compose exec ollama ollama pull llama3.2:1b
 
 services:
   postgres:
@@ -163,7 +165,7 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-sift}:${POSTGRES_PASSWORD:-sift}@postgres:5432/${POSTGRES_DB:-sift}
       OLLAMA_BASE_URL: http://ollama:11434
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2}
+      OLLAMA_MODEL: llama3.2:1b
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       LIVEKIT_URL: ${LIVEKIT_URL:-}

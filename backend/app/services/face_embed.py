@@ -4,7 +4,10 @@ Production uses InsightFace buffalo_l (SCRFD detection and ArcFace embeddings).
 The hashing backend is the deterministic stand-in used when that model is not selected.
 """
 
+import ctypes
+import gc
 import math
+import sys
 import threading
 from dataclasses import dataclass
 from io import BytesIO
@@ -121,6 +124,22 @@ class InsightFaceEmbedder:
             self._app = app
         return self._app
 
+    def release(self) -> None:
+        """Drop the ONNX sessions so the interview models can use the memory."""
+        with self._lock:
+            app = self._app
+            self._app = None
+        if app is None:
+            return
+        models = getattr(app, "models", None)
+        if isinstance(models, dict):
+            for name in list(models):
+                model = models.pop(name)
+                session = getattr(model, "session", None)
+                if session is not None:
+                    del session
+                del model
+
 
 def create_face_embedder(settings: Settings | None = None) -> FaceEmbedder:
     resolved = settings or get_settings()
@@ -133,6 +152,21 @@ def create_face_embedder(settings: Settings | None = None) -> FaceEmbedder:
         cached = InsightFaceEmbedder(resolved.face_model, root)
         _insight[key] = cached
     return cached
+
+
+def release_face_embedder() -> None:
+    """Unload every cached face model and hand the memory back to the machine."""
+    cached = list(_insight.values())
+    _insight.clear()
+    for embedder in cached:
+        embedder.release()
+    gc.collect()
+    if sys.platform != "linux":
+        return
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except OSError:
+        return
 
 
 def _normalize(values: list[float]) -> list[float]:

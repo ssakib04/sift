@@ -11,7 +11,7 @@ from app.core.config import Settings
 from app.core.llm_fallback import FallbackLLMManager
 from app.schemas.screening import CvUploadItemRead, CvUploadRead
 from app.services.embeddings import Embedder
-from app.services.face_embed import create_face_embedder
+from app.services.face_embed import create_face_embedder, release_face_embedder
 from app.services.notices import ranking_notice_message, record_ranking_notice
 from app.services.ocr_service import InvalidCvError, validate_cv
 from app.services.screening import accept_cv, load_mail_keys
@@ -60,41 +60,44 @@ async def upload_job_cvs(
         raise UploadError("JOB_NOT_LOCKED", "Only a locked job can receive CVs.")
     face_embedder = create_face_embedder(settings)
     items: list[CvUploadItemRead] = []
-    for uploaded in files:
-        filename = Path(uploaded.filename).name or "cv"
-        try:
-            media_type = validate_cv(filename, uploaded.data)
-        except InvalidCvError:
-            items.append(CvUploadItemRead(filename=filename, outcome="invalid"))
-            if on_settled is not None:
-                await on_settled("invalid")
+    try:
+        for uploaded in files:
+            filename = Path(uploaded.filename).name or "cv"
+            try:
+                media_type = validate_cv(filename, uploaded.data)
+            except InvalidCvError:
+                items.append(CvUploadItemRead(filename=filename, outcome="invalid"))
+                if on_settled is not None:
+                    await on_settled("invalid")
+                    await session.commit()
+                continue
+            try:
+                outcome = await accept_cv(
+                    session,
+                    settings,
+                    llm=llm,
+                    embedder=embedder,
+                    face_embedder=face_embedder,
+                    version_id=matched.version_id,
+                    message_id=f"upload-{uuid.uuid4()}",
+                    from_address="",
+                    filename=filename,
+                    data=uploaded.data,
+                    media_type=media_type,
+                )
+                if on_settled is not None:
+                    await on_settled(outcome)
                 await session.commit()
-            continue
-        try:
-            outcome = await accept_cv(
-                session,
-                settings,
-                llm=llm,
-                embedder=embedder,
-                face_embedder=face_embedder,
-                version_id=matched.version_id,
-                message_id=f"upload-{uuid.uuid4()}",
-                from_address="",
-                filename=filename,
-                data=uploaded.data,
-                media_type=media_type,
-            )
-            if on_settled is not None:
-                await on_settled(outcome)
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            logger.exception("cv_upload_failed filename=%s", filename)
-            outcome = "failed"
-            if on_settled is not None:
-                await on_settled(outcome)
-                await session.commit()
-        items.append(CvUploadItemRead(filename=filename, outcome=outcome))
+            except Exception:
+                await session.rollback()
+                logger.exception("cv_upload_failed filename=%s", filename)
+                outcome = "failed"
+                if on_settled is not None:
+                    await on_settled(outcome)
+                    await session.commit()
+            items.append(CvUploadItemRead(filename=filename, outcome=outcome))
+    finally:
+        release_face_embedder()
     result = _read(items)
     if result.scored > 0:
         await record_ranking_notice(
