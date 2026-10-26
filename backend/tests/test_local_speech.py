@@ -5,9 +5,14 @@ from pathlib import Path
 import pytest
 
 from app.services.local_speech import (
+    KOKORO_FILES,
     BargeMeter,
     SpeechGate,
+    ensure_kokoro_files,
+    float_array_to_pcm16,
+    kokoro_language,
     is_audio_kind,
+    is_video_kind,
     join_segment_text,
     pcm16_rms,
     float_to_pcm16,
@@ -109,6 +114,59 @@ def test_a_short_answer_closes_sooner_than_a_story() -> None:
     for _ in range(4):
         assert ongoing.push(_tone(60_000, 1000, 0.4)) is None
     assert ongoing.push(_tone(60_000, 1000, 0.4)) is not None
+
+
+def test_kokoro_voice_language_follows_the_voice_prefix() -> None:
+    assert kokoro_language("af_heart") == "en-us"
+    assert kokoro_language("bf_emma") == "en-gb"
+
+
+def test_kokoro_float_audio_becomes_clipped_pcm16() -> None:
+    pcm = float_array_to_pcm16([0.0, 0.5, 2.0, -2.0])
+    values = struct.unpack("<4h", pcm)
+    assert values[0] == 0
+    assert 16000 < values[1] < 16500
+    assert values[2] == 32767
+    assert values[3] == -32767
+
+
+def test_kokoro_files_are_reused_once_downloaded(tmp_path: Path) -> None:
+    for name, _url in KOKORO_FILES.values():
+        (tmp_path / name).write_bytes(b"model")
+    model, voices = ensure_kokoro_files(tmp_path)
+    assert model.name.endswith(".onnx")
+    assert voices.name.endswith(".bin")
+
+
+def test_livekit_video_kind_is_the_integer_two() -> None:
+    class _Named:
+        name = "KIND_VIDEO"
+
+    assert is_video_kind(2) is True
+    assert is_video_kind(_Named()) is True
+    assert is_video_kind(1) is False
+    assert is_video_kind("audio") is False
+
+
+def test_a_short_turn_can_be_read_early_once_per_pause() -> None:
+    gate = SpeechGate(sample_rate=1000, silence_ms=4800, short_silence_ms=3200)
+    assert gate.push(_tone(1500, 1000, 0.4)) is None
+    assert gate.early_audio(900, 6000) is None
+    assert gate.push(b"\x00\x00" * 1000) is None
+    early = gate.early_audio(900, 6000)
+    assert early is not None
+    assert pcm16_rms(early) > 0.05
+    assert gate.early_audio(900, 6000) is None
+    assert gate.push(_tone(500, 1000, 0.4)) is None
+    assert gate.push(b"\x00\x00" * 1000) is None
+    assert gate.early_audio(900, 6000) is not None
+
+
+def test_a_long_turn_is_never_read_early() -> None:
+    gate = SpeechGate(sample_rate=1000, silence_ms=4800, short_silence_ms=3200)
+    assert gate.push(_tone(7000, 1000, 0.4)) is None
+    assert gate.push(b"\x00\x00" * 1000) is None
+    assert gate.early_audio(900, 6000) is None
 
 
 def test_trailing_silence_is_trimmed_before_transcription() -> None:

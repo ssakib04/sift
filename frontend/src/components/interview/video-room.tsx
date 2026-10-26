@@ -2,8 +2,8 @@
 
 import { ConnectionState, Room, RoomEvent, Track } from "livekit-client";
 import type { TranscriptTurn } from "@/lib/api";
-import { isAgentAudio, presenceMood, type PresenceMood } from "@/components/interview/agent-audio";
-import { InterviewerPresence } from "@/components/interview/interviewer-avatar";
+import { isAgentAudio } from "@/components/interview/agent-audio";
+import { InterviewerAvatar } from "@/components/interview/interviewer-avatar";
 import { PointerEvent as ReactPointerEvent, ReactNode, useEffect, useRef, useState } from "react";
 
 type VideoRoomProps = {
@@ -91,9 +91,8 @@ export function VideoRoom({
   const [attempt, setAttempt] = useState(0);
   const [hasRemote, setHasRemote] = useState(false);
   const [avatar, setAvatar] = useState(false);
-  const [mind, setMind] = useState<PresenceMood>("listening");
-  const [mouth, setMouth] = useState(0);
   const [avatarStream, setAvatarStream] = useState<MediaStream | null>(null);
+  const [micStream, setMicStream] = useState<MediaStream | null>(null);
   const [selfPlace, setSelfPlace] = useState({ right: 16, bottom: 88 });
   void sessionId;
   void token;
@@ -234,6 +233,7 @@ export function VideoRoom({
           return;
         }
         streamRef.current = stream;
+        setMicStream(new MediaStream(stream.getAudioTracks()));
         if (localRef.current) {
           localRef.current.srcObject = stream;
         }
@@ -259,14 +259,11 @@ export function VideoRoom({
         connection.on(RoomEvent.DataReceived, (payload, _participant, _kind, topic) => {
           if (topic === "interview") {
             try {
-              const notice = JSON.parse(new TextDecoder().decode(payload)) as { type?: string; state?: string };
+              const notice = JSON.parse(new TextDecoder().decode(payload)) as { type?: string };
               if (notice.type === "avatar" && !cancelled) {
                 avatarCueRef.current = true;
                 setAvatar(true);
                 setHasRemote(true);
-                if (typeof notice.state === "string") {
-                  setMind(presenceMood(notice.state));
-                }
                 report(describe(connection));
                 void connection.startAudio();
               }
@@ -328,56 +325,6 @@ export function VideoRoom({
       streamRef.current = null;
     };
   }, [attempt, livekitToken, livekitUrl, onConnection]);
-
-  useEffect(() => {
-    if (!avatarStream) {
-      setMouth(0);
-      return;
-    }
-    const context = new AudioContext();
-    const source = context.createMediaStreamSource(avatarStream);
-    const analyser = context.createAnalyser();
-    const silent = context.createGain();
-    analyser.fftSize = 2048;
-    analyser.smoothingTimeConstant = 0.35;
-    silent.gain.value = 0;
-    source.connect(analyser);
-    analyser.connect(silent);
-    silent.connect(context.destination);
-    void context.resume();
-    const freq = new Uint8Array(analyser.frequencyBinCount);
-    let frame = 0;
-    let stop = false;
-    let level = 0;
-
-    function tick() {
-      if (stop) {
-        return;
-      }
-      analyser.getByteFrequencyData(freq);
-      const binHz = context.sampleRate / analyser.fftSize;
-      const start = Math.max(0, Math.floor(250 / binHz));
-      const end = Math.min(freq.length, Math.ceil(3400 / binHz));
-      let sum = 0;
-      for (let index = start; index < end; index += 1) {
-        sum += freq[index];
-      }
-      const average = sum / Math.max(1, end - start) / 255;
-      const target = Math.min(1, Math.max(0, (average - 0.035) / 0.16) ** 0.7);
-      const follow = target > level ? 0.62 : 0.22;
-      level += (target - level) * follow;
-      setMouth(level);
-      frame = requestAnimationFrame(tick);
-    }
-
-    tick();
-    return () => {
-      stop = true;
-      cancelAnimationFrame(frame);
-      source.disconnect();
-      void context.close();
-    };
-  }, [avatarStream]);
 
   useEffect(() => {
     if (!captureFrames || !onFrame) {
@@ -510,7 +457,7 @@ export function VideoRoom({
         className={`absolute inset-0 h-full w-full object-cover ${hasRemote && !avatar ? "" : "hidden"}`}
       />
       <audio ref={avatarAudioRef} autoPlay playsInline />
-      {avatar ? <InterviewerPresence level={mouth} mood={mind} /> : null}
+      {avatar ? <InterviewerAvatar voice={avatarStream} heard={micStream} /> : null}
       <div
         className={
           hasRemote

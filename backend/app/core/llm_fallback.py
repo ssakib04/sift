@@ -11,6 +11,9 @@ from app.core.config import Settings, get_settings
 
 logger = logging.getLogger(__name__)
 
+BRIEF_HEDGE_SECONDS = 1.5
+BRIEF_TIMEOUT_SECONDS = 5.0
+
 
 class LLMTier(str, Enum):
     CLAUDE = "claude"
@@ -164,10 +167,39 @@ class GeminiProvider:
         return await self._generate(prompt, system=system, max_output_tokens=None, attempts=self._attempts)
 
     async def complete_brief(self, prompt: str, *, system: str | None = None) -> str:
-        """One short Gemini reply, without retries, for a live interview turn."""
-        return await asyncio.wait_for(
-            self._generate(prompt, system=system, max_output_tokens=200, attempts=1),
-            timeout=4,
+        """One short JSON reply for a live interview turn.
+
+        A call that is still running after the hedge delay gets a second copy, and the first answer wins.
+        """
+        loop = asyncio.get_running_loop()
+        hedge_at = loop.time() + BRIEF_HEDGE_SECONDS
+        deadline = loop.time() + BRIEF_TIMEOUT_SECONDS
+        running = {self._brief_task(prompt, system)}
+        launched = 1
+        failure: BaseException | None = None
+        try:
+            while running:
+                now = loop.time()
+                if now >= deadline:
+                    raise TimeoutError("Gemini did not reply in time")
+                until = deadline if launched > 1 else min(deadline, hedge_at)
+                done, running = await asyncio.wait(running, timeout=until - now, return_when=asyncio.FIRST_COMPLETED)
+                for task in done:
+                    error = task.exception()
+                    if error is None:
+                        return task.result()
+                    failure = error
+                if launched == 1 and (failure is not None or loop.time() >= hedge_at):
+                    running.add(self._brief_task(prompt, system))
+                    launched += 1
+            raise failure if failure is not None else TimeoutError("Gemini did not reply in time")
+        finally:
+            for task in running:
+                task.cancel()
+
+    def _brief_task(self, prompt: str, system: str | None) -> "asyncio.Task[str]":
+        return asyncio.create_task(
+            self._generate(prompt, system=system, max_output_tokens=200, attempts=1, json_reply=True)
         )
 
     async def _generate(
@@ -177,6 +209,7 @@ class GeminiProvider:
         system: str | None,
         max_output_tokens: int | None,
         attempts: int,
+        json_reply: bool = False,
     ) -> str:
         if not self._api_key:
             raise LLMProviderError("Gemini API key is not configured")
@@ -185,7 +218,7 @@ class GeminiProvider:
 
             self._client = genai.Client(api_key=self._api_key)
         config = None
-        if system or max_output_tokens is not None:
+        if system or max_output_tokens is not None or json_reply:
             from google.genai import types
 
             options: dict[str, object] = {}
@@ -193,6 +226,9 @@ class GeminiProvider:
                 options["system_instruction"] = system
             if max_output_tokens is not None:
                 options["max_output_tokens"] = max_output_tokens
+            if json_reply:
+                options["response_mime_type"] = "application/json"
+                options["automatic_function_calling"] = types.AutomaticFunctionCallingConfig(disable=True)
             config = types.GenerateContentConfig(**options)
         last_error: Exception | None = None
         for attempt in range(attempts):

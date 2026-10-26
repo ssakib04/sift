@@ -74,6 +74,8 @@ class Settings(BaseSettings):
     whisper_device: str = "cpu"
     speech_model_dir: str = "data/speech"
     piper_voice: str = "en_GB-cori-medium"
+    speech_voice_engine: str = "kokoro"
+    kokoro_voice: str = "af_heart"
     recruiter_password: str = ""
     api_docs_enabled: bool = False
     interview_duration_minutes: int = 45

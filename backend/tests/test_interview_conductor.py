@@ -2,17 +2,22 @@ import pytest
 
 from app.core.llm_fallback import FallbackLLMManager
 from app.services.interview_conductor import (
+    ANSWER_FILLERS,
+    QUESTION_FILLERS,
     Agenda,
-    answer_beat,
     answer_limit,
+    call_check_line,
     echoes_prompt,
+    ends_turn_early,
     fallback_utterance,
+    filler_line,
     first_question,
     interruption_is_noise,
+    is_call_check,
+    keyword_turn_kind,
     note_answer,
     opening_line,
     plan_reply,
-    settled_turn_kind,
     silence_nudge,
     spoken_limit,
     spoken_question,
@@ -56,7 +61,9 @@ def test_opening_line_waits_for_a_real_question_when_none_is_ready() -> None:
 
 def test_spoken_question_addresses_the_candidate() -> None:
     asked = spoken_question("Does the candidate demonstrate strong Python programming skills?")
-    assert asked == "Do you demonstrate strong Python programming skills?"
+    assert "python programming skills" in asked.lower()
+    assert "how would you find the cause" in asked.lower()
+    assert "demonstrate" not in asked.lower()
     assert spoken_question("Can the candidate build machine learning models?") == "Can you build machine learning models?"
     line = opening_line("Sift", "ML engineer", "Amina Rahman", asked)
     assert "the candidate" not in line.lower()
@@ -98,7 +105,8 @@ async def test_plan_reply_rewrites_a_rubric_the_model_reads_aloud() -> None:
         transcript="",
         heard="Hello.",
     )
-    assert utterance.say == "Do you demonstrate strong Python programming skills?"
+    assert "python programming skills" in utterance.say.lower()
+    assert "demonstrate" not in utterance.say.lower()
     assert "the candidate" not in utterance.say.lower()
 
 
@@ -276,9 +284,9 @@ async def test_a_real_answer_is_restated_in_the_second_person() -> None:
         heard="yes i have 10 years of experience",
     )
     assert "yes i have" not in utterance.say.lower()
-    assert "Do you have 7 years of experience?" in utterance.say
-    assert advanced.answers == 0
-    assert "Do you have 7 years of experience?" not in advanced.covered
+    assert "Can you write tests?" in utterance.say
+    assert advanced.answers == 1
+    assert "Do you have 7 years of experience?" in advanced.covered
 
 
 @pytest.mark.asyncio
@@ -301,9 +309,11 @@ async def test_a_mid_sentence_copy_stays_in_the_second_person() -> None:
         heard=heard,
     )
     spoken = utterance.say.lower()
-    assert "can you write tests?" in spoken
+    assert "can you review a pull request?" in spoken
     assert "billing service" not in spoken
-    assert _advanced.answers == 0
+    assert " i " not in f" {spoken} "
+    assert _advanced.answers == 1
+    assert "Can you write tests?" in _advanced.covered
 
 
 @pytest.mark.asyncio
@@ -357,12 +367,190 @@ async def test_a_visibility_question_is_answered_as_a_person_on_the_call() -> No
     assert advanced.answers == 0
 
 
-def test_a_finished_answer_is_not_taken_back() -> None:
-    assert settled_turn_kind("answer", "question") == "answer"
-    assert settled_turn_kind("answer", "partial") == "answer"
-    assert settled_turn_kind("question", "answer") == "answer"
-    assert settled_turn_kind("question", "aside") == "question"
-    assert answer_beat() > 0
+def test_turn_kinds_come_from_the_words_without_a_model() -> None:
+    assert keyword_turn_kind("I built the billing service in Python and moved it to Postgres.") == "answer"
+    assert keyword_turn_kind("is my camera feed visible") == "aside"
+    assert keyword_turn_kind("What does the team work on?") == "question"
+    assert keyword_turn_kind("Yes.") == "partial"
+    assert keyword_turn_kind("I'd rather not say.") == "decline"
+
+
+def test_call_checks_are_short_questions_about_the_call() -> None:
+    assert is_call_check("is my camera feed visible")
+    assert is_call_check("Can you hear me?")
+    assert is_call_check("Is my mic okay")
+    assert not is_call_check("Have you heard of Kafka?")
+    assert not is_call_check("I built a video pipeline that transcoded uploads for a streaming company in Dhaka.")
+
+
+class _Untouched:
+    async def complete(self, prompt: str, *, system: str | None = None) -> str:
+        del prompt, system
+        raise AssertionError("a call check must not wait on a model")
+
+
+@pytest.mark.asyncio
+async def test_a_camera_check_is_answered_at_once_from_the_room() -> None:
+    agenda = Agenda(
+        questions=("Can you write tests?", "Can you review a pull request?"),
+        asked=("Can you write tests?",),
+    )
+    llm = FallbackLLMManager(_Untouched(), _Untouched(), _Untouched())
+    on, kept = await plan_reply(
+        llm,
+        agenda,
+        company="Sift",
+        job_title="Backend engineer",
+        profile="",
+        transcript="recruiter: Can you write tests?",
+        heard="is my camera feed visible",
+        camera_on=True,
+    )
+    assert on.say.startswith("Yes, your camera is on")
+    assert on.say.endswith("Can you write tests?")
+    assert kept.answers == 0
+    assert kept.covered == ()
+
+    off, _ = await plan_reply(
+        llm,
+        agenda,
+        company="Sift",
+        job_title="Backend engineer",
+        profile="",
+        transcript="recruiter: Can you write tests?",
+        heard="can you see me",
+        camera_on=False,
+    )
+    assert "camera looks off" in off.say
+    assert "Can you write tests?" in off.say
+
+
+def test_a_sound_check_says_the_candidate_is_heard() -> None:
+    assert call_check_line("can you hear me", camera_on=True) == "Yes, I can hear you clearly."
+    both = call_check_line("can you see and hear me", camera_on=True)
+    assert "camera is on" in both
+    assert "hear you" in both
+
+
+def test_only_short_complete_turns_end_early() -> None:
+    assert ends_turn_early("Can you hear me?")
+    assert ends_turn_early("Hello.")
+    assert ends_turn_early("What does your team use for queues?")
+    assert not ends_turn_early("So how would I do it?")
+    assert not ends_turn_early("I would start with the logs")
+    assert not ends_turn_early("")
+
+
+@pytest.mark.asyncio
+async def test_a_side_question_is_followed_by_one_question_only() -> None:
+    agenda = Agenda(
+        questions=("Can you write tests?", "Can you review a pull request?"),
+        asked=("Can you write tests?",),
+    )
+    provider = _Provider(
+        '{"say": "The recruiter will follow up on that. How would you test a payment retry?", '
+        '"answered": false, "covered": [], "done": false, "quiz": false}'
+    )
+    utterance, advanced = await plan_reply(
+        FallbackLLMManager(provider, provider, provider),
+        agenda,
+        company="Sift",
+        job_title="Backend engineer",
+        profile="",
+        transcript="recruiter: Can you write tests?",
+        heard="What does your team use for queues?",
+    )
+    assert utterance.say.count("?") == 1
+    assert advanced.answers == 0
+
+
+_OPEN = Agenda(
+    questions=("Can you write tests?", "Can you review a pull request?"),
+    asked=("Can you write tests?",),
+)
+
+
+async def _reply(model_json: str, heard: str) -> tuple[str, Agenda, str]:
+    provider = _Provider(model_json)
+    utterance, advanced = await plan_reply(
+        FallbackLLMManager(provider, provider, provider),
+        _OPEN,
+        company="Sift",
+        job_title="Backend engineer",
+        profile="",
+        transcript="recruiter: Can you write tests?",
+        heard=heard,
+    )
+    return utterance.say, advanced, provider.prompt
+
+
+@pytest.mark.asyncio
+async def test_a_long_question_without_a_question_mark_is_answered_and_the_item_stays_open() -> None:
+    heard = "before I answer that could you tell me what the backend stack looks like on your side"
+    assert keyword_turn_kind(heard) == "answer"
+    say, advanced, prompt = await _reply(
+        '{"kind": "question", "say": "The recruiter will follow up on that. Coming back to testing, '
+        'how would you test a payment retry?", "answered": true, "covered": [], "done": false, "quiz": false}',
+        heard,
+    )
+    assert say.startswith("The recruiter will follow up on that.")
+    assert say.count("?") == 1
+    assert advanced.answers == 0
+    assert advanced.covered == ()
+    assert "Word-based guess of the kind: answer" in prompt
+
+
+@pytest.mark.asyncio
+async def test_a_request_to_clarify_rephrases_the_same_question() -> None:
+    say, advanced, _prompt = await _reply(
+        '{"kind": "clarify", "say": "I mean automated checks, for example a unit test for a refund. '
+        'How would you test that code?", "answered": false, "covered": [], "done": false, "quiz": false}',
+        "sorry I'm not sure what you mean by that",
+    )
+    assert "for example" in say
+    assert advanced.answers == 0
+    assert "Can you review a pull request?" not in say
+
+
+@pytest.mark.asyncio
+async def test_the_model_can_count_a_turn_the_words_called_a_question() -> None:
+    heard = "How I'd do it is write a failing test first, then fix the bug and keep the test in CI."
+    say, advanced, _prompt = await _reply(
+        '{"kind": "answer", "say": "How would you review a teammate\'s pull request that touches payments?", '
+        '"answered": true, "covered": [], "done": false, "quiz": false}',
+        heard,
+    )
+    assert advanced.answers == 1
+    assert "Can you write tests?" in advanced.covered
+    assert "pull request" in say
+
+
+@pytest.mark.asyncio
+async def test_a_model_partial_gets_one_follow_up_in_its_own_words() -> None:
+    say, advanced, _prompt = await _reply(
+        '{"kind": "partial", "say": "What kind of tests did you write there?", '
+        '"answered": false, "covered": [], "done": false, "quiz": false}',
+        "I wrote some tests at my last job",
+    )
+    assert say == "What kind of tests did you write there?"
+    assert advanced.answers == 0
+    assert "Can you write tests?" in advanced.probed
+
+
+def test_the_prompt_keeps_only_recent_lines() -> None:
+    from app.services.interview_conductor import _prompt
+
+    transcript = "\n".join(f"candidate: line {index}" for index in range(40))
+    prompt = _prompt(_OPEN, company="Sift", job_title="Backend", profile="x" * 9000, transcript=transcript, heard="hi")
+    assert "line 39" in prompt
+    assert "line 10" not in prompt
+    assert "x" * 2600 not in prompt
+
+
+def test_fillers_match_the_turn() -> None:
+    assert filler_line("answer", 0) in ANSWER_FILLERS
+    assert filler_line("question", 1) in QUESTION_FILLERS
+    assert filler_line("answer", 0) != filler_line("answer", 1)
 
 
 @pytest.mark.asyncio
@@ -407,10 +595,10 @@ async def test_a_thin_answer_asks_for_one_example_before_moving_on() -> None:
         transcript="",
         heard="No.",
     )
-    assert "That does not answer it yet." in follow.say
-    assert "Can you write tests?" in follow.say
-    assert "Can you write tests?" not in moved.covered
-    assert moved.answers == 0
+    assert "We'll leave that there." in follow.say
+    assert "Can you review a pull request?" in follow.say
+    assert "Can you write tests?" in moved.covered
+    assert moved.answers == 1
 
 
 @pytest.mark.asyncio
@@ -580,11 +768,38 @@ async def test_a_short_question_stays_on_the_same_item() -> None:
     )
     assert "Can you write tests?" in utterance.say
     assert advanced.answers == 0
-    assert provider.calls == 2
+    assert provider.calls == 1
 
 
 @pytest.mark.asyncio
-async def test_a_long_answer_that_opens_with_what_stays_until_it_answers() -> None:
+async def test_a_related_answer_moves_on_instead_of_repeating_the_rubric() -> None:
+    agenda = Agenda(
+        questions=(
+            "Does the candidate demonstrate experience in backend development and system architecture?",
+            "Can you review a pull request?",
+        ),
+        asked=("Does the candidate demonstrate experience in backend development and system architecture?",),
+    )
+    provider = _Provider(
+        '{"say": "Can you demonstrate experience in backend development and system architecture?", "answered": false, "covered": [], "done": false, "quiz": false}'
+    )
+    utterance, advanced = await plan_reply(
+        FallbackLLMManager(provider, provider, provider),
+        agenda,
+        company="Sift",
+        job_title="Backend engineer",
+        profile="",
+        transcript="",
+        heard="The queue backed up, so I split the workers and traced the stuck jobs in the billing API.",
+    )
+    assert "demonstrate" not in utterance.say.lower()
+    assert "Can you review a pull request?" in utterance.say
+    assert advanced.answers == 1
+    assert "Does the candidate demonstrate experience in backend development and system architecture?" in advanced.covered
+
+
+@pytest.mark.asyncio
+async def test_a_long_answer_that_opens_with_what_moves_on() -> None:
     agenda = Agenda(
         questions=("Can you write tests?", "Can you review a pull request?"),
         asked=("Can you write tests?",),
@@ -598,9 +813,9 @@ async def test_a_long_answer_that_opens_with_what_stays_until_it_answers() -> No
         transcript="",
         heard="What I built was a billing service that handled retries for six months.",
     )
-    assert "Can you write tests?" in utterance.say
-    assert "Can you write tests?" not in advanced.covered
-    assert advanced.answers == 0
+    assert "Can you review a pull request?" in utterance.say
+    assert "Can you write tests?" in advanced.covered
+    assert advanced.answers == 1
 
 
 def test_silence_nudges_are_not_the_same_line() -> None:

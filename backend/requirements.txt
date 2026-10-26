@@ -27,6 +27,7 @@ livekit-api>=1.0.2
 livekit-agents>=1.2.0
 faster-whisper>=1.1.0
 piper-tts>=1.2.0
+kokoro-onnx>=0.6.1
 insightface>=0.7.3,<0.8
 onnxruntime>=1.17.0
 opencv-python-headless>=4.10.0

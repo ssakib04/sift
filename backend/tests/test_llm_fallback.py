@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -168,6 +169,66 @@ async def test_gemini_retries_overloaded_model(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr("app.core.llm_fallback.asyncio.sleep", _no_wait)
     assert await provider.complete("hello") == "ok"
     assert models.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_brief_reply_sends_a_second_copy_when_the_first_is_slow(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Models:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.configs: list[object] = []
+
+        async def generate_content(self, **kwargs: object) -> SimpleNamespace:
+            self.calls += 1
+            self.configs.append(kwargs.get("config"))
+            if self.calls == 1:
+                await asyncio.sleep(5)
+                return SimpleNamespace(text='{"say": "slow"}')
+            return SimpleNamespace(text='{"say": "fast"}')
+
+    models = Models()
+    provider = GeminiProvider(api_key="test-gemini", model="gemini-3.5-flash-lite")
+    provider._client = SimpleNamespace(aio=SimpleNamespace(models=models))
+    monkeypatch.setattr("app.core.llm_fallback.BRIEF_HEDGE_SECONDS", 0.01)
+
+    assert await provider.complete_brief("ask", system="be brief") == '{"say": "fast"}'
+    assert models.calls == 2
+    config = models.configs[0]
+    assert getattr(config, "response_mime_type", None) == "application/json"
+
+
+@pytest.mark.asyncio
+async def test_brief_reply_does_not_duplicate_a_fast_call() -> None:
+    class Models:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def generate_content(self, **_kwargs: object) -> SimpleNamespace:
+            self.calls += 1
+            return SimpleNamespace(text='{"say": "hi"}')
+
+    models = Models()
+    provider = GeminiProvider(api_key="test-gemini", model="gemini-3.5-flash-lite")
+    provider._client = SimpleNamespace(aio=SimpleNamespace(models=models))
+
+    assert await provider.complete_brief("ask") == '{"say": "hi"}'
+    assert models.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_brief_reply_gives_up_after_the_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Models:
+        async def generate_content(self, **_kwargs: object) -> SimpleNamespace:
+            await asyncio.sleep(5)
+            return SimpleNamespace(text="late")
+
+    provider = GeminiProvider(api_key="test-gemini", model="gemini-3.5-flash-lite")
+    provider._client = SimpleNamespace(aio=SimpleNamespace(models=Models()))
+    monkeypatch.setattr("app.core.llm_fallback.BRIEF_HEDGE_SECONDS", 0.01)
+    monkeypatch.setattr("app.core.llm_fallback.BRIEF_TIMEOUT_SECONDS", 0.05)
+
+    with pytest.raises(TimeoutError):
+        await provider.complete_brief("ask")
 
 
 @pytest.mark.asyncio

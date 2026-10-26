@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from livekit import rtc
-from livekit.agents import AgentServer, AutoSubscribe, JobContext, cli
+from livekit.agents import AgentServer, AutoSubscribe, JobContext, JobProcess, cli
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
@@ -17,15 +17,19 @@ from app.core.llm_fallback import FallbackLLMManager, create_fallback_manager
 from app.models.candidate import Candidate, CandidateParseResult, InterviewSession
 from app.models.job import JobVersion
 from app.services.interview_conductor import (
+    ANSWER_FILLERS,
+    QUESTION_FILLERS,
     QUIZ_LINE,
+    SORRY_LINE,
     Agenda,
-    answer_beat,
+    Utterance,
     candidate_asked,
-    classify_turn,
     closing_reply,
     echoes_prompt,
+    ends_turn_early,
+    filler_line,
     interruption_is_noise,
-    open_checklist_item,
+    keyword_turn_kind,
     opening_line,
     plan_reply,
     silence_nudge,
@@ -36,27 +40,34 @@ from app.services.interview_sessions import checklist_questions, close_interview
 from app.services.interview_transcript import transcript_notice
 from app.services.local_speech import (
     BargeMeter,
+    KokoroSynthesizer,
     PiperSynthesizer,
     SpeechGate,
+    SpeechSynthesizer,
+    ensure_kokoro_files,
     speech_prompt,
     WhisperRecognizer,
     ensure_piper_voice,
     float_to_pcm16,
     pcm16_to_float,
     is_audio_kind,
+    is_video_kind,
     resample_linear,
     split_pcm16,
 )
 
 logger = logging.getLogger(__name__)
 
-server = AgentServer()
-_engines: tuple[WhisperRecognizer, PiperSynthesizer] | None = None
+_engines: tuple[WhisperRecognizer, SpeechSynthesizer] | None = None
 _LISTEN_TIMEOUT = 90.0
 _QUIET_LIMIT = 12.0
 _INTERRUPT_WAIT = 5.0
 _INTERRUPT_SILENCE_MS = 2400
 _INTERRUPT_SHORT_SILENCE_MS = 1600
+_EARLY_AFTER_MS = 900
+_EARLY_LONGEST_MS = 6000
+_FILLER_AFTER = 0.9
+_TURN_FAILURES = 3
 
 
 @dataclass(frozen=True)
@@ -68,18 +79,42 @@ class Brief:
     profile: str
 
 
-def speech_engines() -> tuple[WhisperRecognizer, PiperSynthesizer]:
-    """Load Whisper and Piper once per process. Both run on this machine."""
+def speech_engines() -> tuple[WhisperRecognizer, SpeechSynthesizer]:
+    """Load Whisper and the voice once per process. Both run on this machine."""
     global _engines
     if _engines is None:
         settings = get_settings()
         directory = Path(settings.speech_model_dir)
-        voice = ensure_piper_voice(directory, settings.piper_voice)
         _engines = (
             WhisperRecognizer(settings.whisper_model, settings.whisper_device, str(directory)),
-            PiperSynthesizer(voice),
+            _voice(directory, settings.speech_voice_engine, settings.kokoro_voice, settings.piper_voice),
         )
     return _engines
+
+
+def _voice(directory: Path, engine: str, kokoro_voice: str, piper_voice: str) -> SpeechSynthesizer:
+    """Kokoro sounds closer to a person. Piper is kept for when Kokoro cannot load."""
+    if engine == "kokoro":
+        try:
+            model, voices = ensure_kokoro_files(directory)
+            synthesizer = KokoroSynthesizer(model, voices, kokoro_voice)
+            logger.info("interviewer_voice engine=kokoro voice=%s", kokoro_voice)
+            return synthesizer
+        except Exception:
+            logger.exception("interviewer_kokoro_failed")
+    logger.info("interviewer_voice engine=piper voice=%s", piper_voice)
+    return PiperSynthesizer(ensure_piper_voice(directory, piper_voice))
+
+
+def prewarm(_process: JobProcess) -> None:
+    """Load the speech models before a call arrives, so the first words are not delayed."""
+    try:
+        speech_engines()
+    except Exception:
+        logger.exception("interviewer_prewarm_failed")
+
+
+server = AgentServer(setup_fnc=prewarm, num_idle_processes=1, initialize_process_timeout=180.0)
 
 
 class CandidateEar:
@@ -209,6 +244,9 @@ async def conduct(ctx: JobContext) -> None:
     planner = create_fallback_manager()
     clips: dict[str, bytes] = {}
     slot: dict[str, rtc.AudioSource | None] = {"source": None}
+    warming = asyncio.create_task(_warm_clips(synthesizer, clips, (*ANSWER_FILLERS, *QUESTION_FILLERS, SORRY_LINE)))
+    turns = 0
+    failures = 0
 
     try:
         greeting = await _deliver(ctx, ear, recognizer, synthesizer, hello, slot["source"], clips)
@@ -257,10 +295,10 @@ async def conduct(ctx: JobContext) -> None:
                 continue
             quiet = 0
             lines.append(f"candidate: {heard}")
-            await _record(ctx, "candidate", heard)
             await _mind(ctx, "thinking")
-            kind = await classify_turn(planner, question=open_checklist_item(agenda), heard=heard)
-            if kind == "answer":
+            kind = keyword_turn_kind(heard)
+            planned = time.perf_counter()
+            try:
                 plan_task = asyncio.create_task(
                     plan_reply(
                         planner,
@@ -271,25 +309,22 @@ async def conduct(ctx: JobContext) -> None:
                         transcript="\n".join(lines),
                         heard=heard,
                         turn_kind=kind,
+                        camera_on=_candidate_camera(ctx.room),
                     )
                 )
-                await asyncio.sleep(answer_beat())
-                planned = time.perf_counter()
+                await _record(ctx, "candidate", heard)
+                await _fill_gap(ctx, ear, plan_task, filler_line(kind, turns), slot, clips)
                 utterance, agenda = await plan_task
-                logger.info("interviewer_planned seconds=%.1f", time.perf_counter() - planned)
-            else:
-                planned = time.perf_counter()
-                utterance, agenda = await plan_reply(
-                    planner,
-                    agenda,
-                    company=brief.company_name,
-                    job_title=brief.job_title,
-                    profile=brief.profile,
-                    transcript="\n".join(lines),
-                    heard=heard,
-                    turn_kind=kind,
-                )
-                logger.info("interviewer_planned seconds=%.1f", time.perf_counter() - planned)
+                failures = 0
+            except Exception:
+                logger.exception("interviewer_turn_failed")
+                failures += 1
+                if failures >= _TURN_FAILURES:
+                    await close_interview_from_agent(ctx.room.name)
+                    break
+                utterance = Utterance(say=SORRY_LINE, covered=(), finished=False, offer_quiz=False)
+            turns += 1
+            logger.info("interviewer_planned kind=%s seconds=%.1f", kind, time.perf_counter() - planned)
             lines.append(f"recruiter: {utterance.say}")
             reply = await _deliver(ctx, ear, recognizer, synthesizer, utterance.say, slot["source"], clips)
             slot["source"] = reply.source
@@ -303,14 +338,58 @@ async def conduct(ctx: JobContext) -> None:
                 await _finish(ctx, ear, recognizer, synthesizer, planner, brief, slot, clips, lines)
                 break
     finally:
+        warming.cancel()
         await ear.close()
+
+
+async def _warm_clips(synthesizer: SpeechSynthesizer, clips: dict[str, bytes], texts: tuple[str, ...]) -> None:
+    """Synthesize the short fillers once, so they can play the moment a turn ends."""
+    for text in texts:
+        try:
+            clips[text] = await _sentence_audio(synthesizer, text, clips)
+        except Exception:
+            logger.exception("interviewer_clip_failed")
+
+
+async def _fill_gap(
+    ctx: JobContext,
+    ear: CandidateEar,
+    task: "asyncio.Task[tuple[Utterance, Agenda]]",
+    filler: str,
+    slot: dict[str, rtc.AudioSource | None],
+    clips: dict[str, bytes],
+) -> None:
+    """Say a short acknowledgement when the reply is not ready quickly, so the line never goes dead."""
+    done, _pending = await asyncio.wait({task}, timeout=_FILLER_AFTER)
+    if done:
+        return
+    audio = clips.get(filler)
+    if not audio:
+        return
+    source = await _ensure_source(ctx, slot["source"])
+    slot["source"] = source
+    await _play_audio(ear, source, audio)
+
+
+def _candidate_camera(room: rtc.Room) -> bool | None:
+    """Whether the candidate's camera is published and not muted. None when they are not in the room."""
+    for participant in room.remote_participants.values():
+        if participant.identity != "candidate":
+            continue
+        cameras = [
+            publication
+            for publication in participant.track_publications.values()
+            if is_video_kind(getattr(publication, "kind", None))
+        ]
+        return any(not getattr(publication, "muted", False) for publication in cameras)
+    return None
 
 
 async def _finish(
     ctx: JobContext,
     ear: CandidateEar,
     recognizer: WhisperRecognizer,
-    synthesizer: PiperSynthesizer,
+    synthesizer: SpeechSynthesizer,
     planner: FallbackLLMManager,
     brief: Brief,
     slot: dict[str, rtc.AudioSource | None],
@@ -372,23 +451,34 @@ async def _listen(
             return None
         audio = gate.push(pcm)
         if audio is None:
+            early = gate.early_audio(_EARLY_AFTER_MS, _EARLY_LONGEST_MS)
+            if early is not None:
+                text = await _transcribe(recognizer, early)
+                if text and ends_turn_early(text) and not echoes_prompt(text, last_spoken):
+                    logger.info("interviewer_turn_ended_early chars=%s", len(text))
+                    return text
             if on_hold is not None and gate.wants_hold():
                 await on_hold()
             if not gate.armed and time.perf_counter() - started >= idle_seconds:
                 return ""
             continue
-        transcribed = time.perf_counter()
-        text = await asyncio.to_thread(recognizer.transcribe, audio, 16000)
-        cleaned = " ".join(text.split())
-        logger.info(
-            "interviewer_transcribed seconds=%.1f chars=%s",
-            time.perf_counter() - transcribed,
-            len(cleaned),
-        )
+        cleaned = await _transcribe(recognizer, audio)
         if cleaned and not echoes_prompt(cleaned, last_spoken):
             return cleaned
         gate = fresh_gate()
         started = time.perf_counter()
+
+
+async def _transcribe(recognizer: WhisperRecognizer, audio: bytes) -> str:
+    transcribed = time.perf_counter()
+    text = await asyncio.to_thread(recognizer.transcribe, audio, 16000)
+    cleaned = " ".join(text.split())
+    logger.info(
+        "interviewer_transcribed seconds=%.1f chars=%s",
+        time.perf_counter() - transcribed,
+        len(cleaned),
+    )
+    return cleaned
 
 
 _PLAYBACK_RATE = 48000
@@ -404,7 +494,7 @@ async def _deliver(
     ctx: JobContext,
     ear: CandidateEar,
     recognizer: WhisperRecognizer,
-    synthesizer: PiperSynthesizer,
+    synthesizer: SpeechSynthesizer,
     text: str,
     source: rtc.AudioSource | None,
     clips: dict[str, bytes],
@@ -452,7 +542,7 @@ async def _deliver(
 async def _speak(
     ctx: JobContext,
     ear: CandidateEar,
-    synthesizer: PiperSynthesizer,
+    synthesizer: SpeechSynthesizer,
     text: str,
     source: rtc.AudioSource | None,
     clips: dict[str, bytes],
@@ -481,7 +571,7 @@ async def _speak(
     return Playback(source, False, text, "")
 
 
-async def _sentence_audio(synthesizer: PiperSynthesizer, sentence: str, clips: dict[str, bytes]) -> bytes:
+async def _sentence_audio(synthesizer: SpeechSynthesizer, sentence: str, clips: dict[str, bytes]) -> bytes:
     cached = clips.get(sentence)
     if cached is not None:
         return cached

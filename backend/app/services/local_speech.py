@@ -4,6 +4,7 @@ import struct
 import sys
 from collections.abc import Iterable
 from pathlib import Path
+from typing import Protocol
 
 VOICE_FILES = {
     "en_GB-cori-medium": (
@@ -23,6 +24,14 @@ def is_audio_kind(kind: object) -> bool:
         return True
     name = str(getattr(kind, "name", kind)).upper()
     return "AUDIO" in name
+
+
+def is_video_kind(kind: object) -> bool:
+    """LiveKit reports a camera as the integer 2, not the word video."""
+    if kind == 2:
+        return True
+    name = str(getattr(kind, "name", kind)).upper()
+    return "VIDEO" in name
 
 
 def pcm16_rms(pcm: bytes) -> float:
@@ -144,12 +153,27 @@ class SpeechGate:
         self._silence = 0
         self._armed = False
         self._hold_sent = False
+        self._peeked = False
         self._chunks: list[bytes] = []
         self._samples = 0
 
     @property
     def armed(self) -> bool:
         return self._armed
+
+    def early_audio(self, after_ms: int, longest_ms: int) -> bytes | None:
+        """The turn so far, once per pause, so a short question can be answered before the full wait.
+
+        Only a short turn qualifies. Speech after the pause makes the next pause eligible again.
+        """
+        if self._peeked or not self._armed:
+            return None
+        if self._voiced > self.sample_rate * longest_ms // 1000:
+            return None
+        if self._silence < self.sample_rate * after_ms // 1000:
+            return None
+        self._peeked = True
+        return b"".join(self._chunks)
 
     def wants_hold(self) -> bool:
         """True once, when a long answer has paused long enough for a listening sound."""
@@ -169,6 +193,7 @@ class SpeechGate:
         if pcm16_rms(pcm) >= self.threshold:
             self._speech += samples
             self._silence = 0
+            self._peeked = False
             if not self._armed and self._speech >= self._speech_needed:
                 self._armed = True
                 self._voiced = self._speech
@@ -194,6 +219,7 @@ class SpeechGate:
         self._silence = 0
         self._armed = False
         self._hold_sent = False
+        self._peeked = False
         return audio
 
 
@@ -249,6 +275,70 @@ def _download(url: str, path: Path) -> None:
                 for chunk in response.iter_bytes():
                     handle.write(chunk)
     temporary.replace(path)
+
+
+class SpeechSynthesizer(Protocol):
+    def synthesize(self, text: str) -> tuple[bytes, int]:
+        """Return 16-bit mono PCM for the text and its sample rate."""
+
+
+KOKORO_FILES = {
+    "model": (
+        "kokoro-v1.0.int8.onnx",
+        "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.int8.onnx",
+    ),
+    "voices": (
+        "voices-v1.0.bin",
+        "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin",
+    ),
+}
+_KOKORO_RATE = 24000
+
+
+def ensure_kokoro_files(directory: Path) -> tuple[Path, Path]:
+    """Keep the Kokoro model and voices on disk. They are downloaded once, then synthesis is local."""
+    directory.mkdir(parents=True, exist_ok=True)
+    paths: list[Path] = []
+    for key in ("model", "voices"):
+        name, url = KOKORO_FILES[key]
+        path = directory / name
+        if not path.exists():
+            _download(url, path)
+        paths.append(path)
+    return paths[0], paths[1]
+
+
+def kokoro_language(voice: str) -> str:
+    """Kokoro voices starting with b are British English. The rest used here are American English."""
+    return "en-gb" if voice.startswith("b") else "en-us"
+
+
+def float_array_to_pcm16(samples: object) -> bytes:
+    import numpy as np
+
+    clipped = np.clip(np.asarray(samples, dtype=np.float32), -1.0, 1.0)
+    return (clipped * 32767).astype("<i2").tobytes()
+
+
+class KokoroSynthesizer:
+    """Speak text with the local Kokoro model. Returns 16-bit mono PCM and its sample rate."""
+
+    def __init__(self, model_path: Path, voices_path: Path, voice: str, speed: float = 1.0) -> None:
+        from kokoro_onnx import Kokoro
+
+        self._engine = Kokoro(str(model_path), str(voices_path))
+        if voice not in self._engine.get_voices():
+            raise ValueError(f"Unsupported Kokoro voice: {voice}")
+        self._voice = voice
+        self._speed = speed
+        self._language = kokoro_language(voice)
+
+    def synthesize(self, text: str) -> tuple[bytes, int]:
+        spoken = " ".join(text.split())
+        if not spoken:
+            return b"", _KOKORO_RATE
+        samples, rate = self._engine.create(spoken, voice=self._voice, speed=self._speed, lang=self._language)
+        return float_array_to_pcm16(samples), int(rate)
 
 
 class PiperSynthesizer:
@@ -325,7 +415,7 @@ class WhisperRecognizer:
             np.asarray(samples, dtype=np.float32),
             language="en",
             vad_filter=True,
-            beam_size=5,
+            beam_size=1,
             best_of=1,
             condition_on_previous_text=False,
             initial_prompt=prompt or None,
