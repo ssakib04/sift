@@ -130,6 +130,11 @@ async def open_recruiter_session(
 async def session_detail(db: AsyncSession, settings: Settings, claims: SessionClaims, host: str) -> SessionDetail:
     row, job_title, _job_id = await _require(db, claims)
     livekit_url, livekit_token = issue_livekit_token(settings, room=str(row.id), role=claims.role)
+    if claims.role == "recruiter" and row.status != "ended" and (row.conductor or "") != "agent":
+        try:
+            await dispatch_room_agent(settings, str(row.id), recruiter_present=True)
+        except Exception:
+            logger.exception("transcriber_dispatch_failed")
     return SessionDetail(
         session_id=row.id,
         role=claims.role,

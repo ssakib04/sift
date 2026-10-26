@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta
 
 from livekit.api import CreateAgentDispatchRequest
 
-from app.services.interview_livekit import TRANSCRIBER_AGENT_NAME, transcriber_dispatch
+from app.services.interview_livekit import TRANSCRIBER_AGENT_NAME, listener_already_sent, transcriber_dispatch
 from app.services.interview_practice import is_practice_job, practice_guest_url
 from app.services.interview_transcript import (
     TranscriptWrite,
@@ -30,6 +30,12 @@ def test_a_sentence_is_placed_before_the_moment_it_finished() -> None:
     start, end = spoken_window("I built a FastAPI service for hiring.", started_at=started, now=now)
     assert end == 12
     assert 0 <= start < end
+
+
+def test_a_listener_already_in_the_room_is_not_sent_again() -> None:
+    assert listener_already_sent(["sift-transcriber"], "sift-transcriber")
+    assert not listener_already_sent([], "sift-transcriber")
+    assert not listener_already_sent(["sift-interviewer"], "sift-transcriber")
 
 
 def test_transcriber_dispatch_targets_the_interview_room() -> None:

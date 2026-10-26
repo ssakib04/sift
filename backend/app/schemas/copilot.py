@@ -1,7 +1,7 @@
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.schemas.job import JobRead
 
@@ -27,18 +27,32 @@ CopilotConfirm = Literal["", "approve", "inbox"]
 CopilotFocus = Literal["stuck", "empty", "summary"]
 
 
+_TURN_WINDOW = 16
+_CONTENT_CAP = 4000
+
+
 class CopilotMessage(BaseModel):
     role: CopilotRole
-    content: str = Field(min_length=1, max_length=4000)
+    content: str = Field(min_length=1, max_length=20000)
+
+    @field_validator("content")
+    @classmethod
+    def clip_content(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("message content is empty")
+        return text[:_CONTENT_CAP]
 
 
 class CopilotTurnRequest(BaseModel):
-    messages: list[CopilotMessage] = Field(min_length=1, max_length=20)
+    messages: list[CopilotMessage] = Field(min_length=1, max_length=200)
 
     @model_validator(mode="after")
     def latest_message_is_from_recruiter(self) -> "CopilotTurnRequest":
         if self.messages[-1].role != "user":
             raise ValueError("the latest message must be from the recruiter")
+        if len(self.messages) > _TURN_WINDOW:
+            self.messages = self.messages[-_TURN_WINDOW :]
         return self
 
 

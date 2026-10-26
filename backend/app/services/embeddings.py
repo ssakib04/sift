@@ -1,6 +1,7 @@
 import hashlib
 import math
 import re
+import threading
 from typing import Any, Protocol
 
 from app.core.config import Settings, get_settings
@@ -25,14 +26,16 @@ class MiniLMEmbedder:
     def __init__(self, model_name: str) -> None:
         self._model_name = model_name
         self._model: Any = None
+        self._lock = threading.Lock()
 
     def embed(self, texts: list[str]) -> list[list[float]]:
-        if self._model is None:
-            from fastembed import TextEmbedding
+        with self._lock:
+            if self._model is None:
+                from fastembed import TextEmbedding
 
-            self._model = TextEmbedding(model_name=self._model_name)
-        vectors = list(self._model.embed(texts))
-        return [_as_unit_list(vector) for vector in vectors]
+                self._model = TextEmbedding(model_name=self._model_name)
+            vectors = list(self._model.embed(texts))
+            return [_as_unit_list(vector) for vector in vectors]
 
 
 def create_embedder(settings: Settings | None = None) -> Embedder:

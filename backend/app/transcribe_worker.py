@@ -67,6 +67,9 @@ class MultiUserTranscriber:
         self._tasks: set[asyncio.Task] = set()
         self._locks: dict[str, asyncio.Lock] = {}
 
+    def set_keyterms(self, terms: list[str]) -> None:
+        self._keyterms = terms
+
     def start(self) -> None:
         self.ctx.room.on("participant_connected", self.on_participant_connected)
         self.ctx.room.on("participant_disconnected", self.on_participant_disconnected)
@@ -171,14 +174,25 @@ class MultiUserTranscriber:
 async def entrypoint(ctx: JobContext) -> None:
     from app.services.interview_sessions import speech_keyterms
 
-    terms = await speech_keyterms(ctx.room.name)
-    transcriber = MultiUserTranscriber(ctx, keyterms=terms)
+    transcriber = MultiUserTranscriber(ctx)
     transcriber.start()
+    terms_task = asyncio.create_task(speech_keyterms(ctx.room.name))
+
+    def apply_terms(done: asyncio.Task) -> None:
+        if done.cancelled():
+            return
+        try:
+            transcriber.set_keyterms(list(done.result()))
+        except Exception:
+            logger.exception("speech_keyterms_failed")
+
+    terms_task.add_done_callback(apply_terms)
     await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
     for participant in ctx.room.remote_participants.values():
         transcriber.on_participant_connected(participant)
 
     async def cleanup() -> None:
+        terms_task.cancel()
         await transcriber.aclose()
 
     ctx.add_shutdown_callback(cleanup)

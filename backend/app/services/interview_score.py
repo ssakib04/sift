@@ -22,6 +22,7 @@ from app.models.candidate import (
 from app.models.job import JobChecklistQuery, JobVersion
 from app.schemas.interview_score import InterviewHistoryRead, InterviewScoreRead, PerformanceDimensionRead
 from app.services.cv_claims import anchored_quote
+from app.services.transcript_cleanup import is_disfluency_only, pair_speech, recruiter_aside, same_line
 
 DIMENSIONS: tuple[tuple[str, str], ...] = (
     ("technical_competency", "Technical competency"),
@@ -378,7 +379,7 @@ def _technical(speech: str, checklist: list[ChecklistTopic]) -> tuple[float, str
 
 
 def _communication(turns: list[SpeechTurn]) -> tuple[float, str, str]:
-    answers = [turn.text.strip() for turn in turns if turn.speaker == "candidate" and turn.text.strip()]
+    answers = _spoken_lines(turns)
     if not answers:
         return 0.0, "", "No candidate speech was captured."
     clear = [text for text in answers if 8 <= len(_tokens(text)) <= 90]
@@ -530,38 +531,28 @@ def _specific(sentence: str) -> bool:
 
 
 def _pairs(turns: list[SpeechTurn]) -> list[tuple[str, str]]:
-    pairs: list[tuple[str, str]] = []
-    question: str | None = None
-    answer: list[str] = []
+    sequenced = [(turn.speaker, turn.text, 0.0, 0.0) for turn in turns]
+    return [(item.question, item.answer) for item in pair_speech(sequenced)]
 
-    def flush() -> None:
-        nonlocal question, answer
-        if question is None and not answer:
-            return
-        pairs.append((question or "", " ".join(answer).strip()))
-        question = None
-        answer = []
 
+def _spoken_lines(turns: list[SpeechTurn]) -> list[str]:
+    lines: list[str] = []
+    last_prompt = ""
     for turn in turns:
-        text = turn.text.strip()
-        if not text:
-            continue
         if turn.speaker == "recruiter":
-            if answer:
-                flush()
-            if question:
-                question = f"{question} {text}"
-                continue
-            question = text
+            if not recruiter_aside(turn.text):
+                last_prompt = turn.text
             continue
-        if turn.speaker == "candidate":
-            answer.append(text)
-    flush()
-    return pairs
+        if turn.speaker != "candidate" or is_disfluency_only(turn.text) or same_line(turn.text, last_prompt):
+            continue
+        text = turn.text.strip()
+        if text:
+            lines.append(text)
+    return lines
 
 
 def _candidate_text(turns: list[SpeechTurn]) -> str:
-    return " ".join(turn.text.strip() for turn in turns if turn.speaker == "candidate" and turn.text.strip()).strip()
+    return " ".join(_spoken_lines(turns)).strip()
 
 
 def _tokens(text: str) -> list[str]:

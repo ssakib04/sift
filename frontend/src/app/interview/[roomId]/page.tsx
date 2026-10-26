@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
+import { CvPacket } from "@/components/interview/cv-packet";
 import { IdentityPanel } from "@/components/interview/identity-panel";
 import { InCallCopilot } from "@/components/interview/in-call-copilot";
 import { LiveTranscript } from "@/components/interview/live-transcript";
@@ -15,9 +16,11 @@ import {
   Identification,
   InterviewCopilot,
   InterviewDetail,
+  InterviewPacketView,
   TranscriptTurn,
   apiRequest,
   bearer,
+  downloadInterviewPacket,
   recallInterview,
   recallPracticeLink,
 } from "@/lib/api";
@@ -42,7 +45,9 @@ export default function InterviewPage() {
   const [left, setLeft] = useState(false);
   const [closed, setClosed] = useState(false);
   const [endError, setEndError] = useState("");
-  const [rail, setRail] = useState<"transcript" | "questions" | "identity">("transcript");
+  const [rail, setRail] = useState<"transcript" | "questions" | "cv" | "identity">("transcript");
+  const [packet, setPacket] = useState<InterviewPacketView | null>(null);
+  const [downloading, setDownloading] = useState<"" | "html" | "pdf">("");
   const [quizOpen, setQuizOpen] = useState(false);
   const [identification, setIdentification] = useState<Identification | null>(null);
   const [admitting, setAdmitting] = useState(false);
@@ -124,6 +129,33 @@ export default function InterviewPage() {
       setRail((current) => (current === "transcript" ? "questions" : current));
     }
   }, [detail?.conductor]);
+
+  useEffect(() => {
+    if (role !== "recruiter" || !token || closed || detail?.status === "ended") {
+      return;
+    }
+    let stop = false;
+    async function loadPacket() {
+      try {
+        const next = await apiRequest<InterviewPacketView>(`/api/v1/interview-sessions/${roomId}/packet`, {
+          headers: bearer(token),
+        });
+        if (!stop) {
+          setPacket(next);
+        }
+      } catch {
+        return;
+      }
+    }
+    void loadPacket();
+    const timer = window.setInterval(() => {
+      void loadPacket();
+    }, 5000);
+    return () => {
+      stop = true;
+      window.clearInterval(timer);
+    };
+  }, [closed, detail?.status, role, roomId, token]);
 
   useEffect(() => {
     if (role !== "recruiter" || !token || closed || detail?.status === "ended") {
@@ -286,6 +318,20 @@ export default function InterviewPage() {
     });
   }
 
+  async function downloadPacket(kind: "html" | "pdf") {
+    if (!token || downloading) {
+      return;
+    }
+    setDownloading(kind);
+    try {
+      await downloadInterviewPacket(roomId, token, kind);
+    } catch (error: unknown) {
+      setMessage(error instanceof Error ? error.message : "Could not save the interview packet.");
+    } finally {
+      setDownloading("");
+    }
+  }
+
   function hangUp() {
     if (role === "recruiter") {
       void endCall();
@@ -396,7 +442,14 @@ export default function InterviewPage() {
               </button>
               <button
                 type="button"
-                className={`flex-1 px-3 py-3 text-sm ${rail === "identity" ? "text-ivory" : "text-mist"}`}
+                className={`flex-1 px-2 py-3 text-sm ${rail === "cv" ? "text-ivory" : "text-mist"}`}
+                onClick={() => setRail("cv")}
+              >
+                CV
+              </button>
+              <button
+                type="button"
+                className={`flex-1 px-2 py-3 text-sm ${rail === "identity" ? "text-ivory" : "text-mist"}`}
                 onClick={() => setRail("identity")}
               >
                 Identity
@@ -414,6 +467,9 @@ export default function InterviewPage() {
                   asking={asking}
                   onAsk={(question) => void askCopilot(question)}
                 />
+              ) : null}
+              {rail === "cv" ? (
+                <CvPacket packet={packet} downloading={downloading} onDownload={(kind) => void downloadPacket(kind)} />
               ) : null}
             </div>
           </aside>

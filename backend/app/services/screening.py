@@ -229,7 +229,8 @@ async def accept_cv(
     _store_cv(settings, digest, filename, data, folder="processed")
     session.add(store_candidate_profile(candidate.id, attributes))
     store_cv_claims(session, candidate.id, attributes, str(result.get("raw_text") or ""))
-    face_row, face_warning = store_candidate_face(
+    face_row, face_warning = await asyncio.to_thread(
+        store_candidate_face,
         settings.cv_storage_dir,
         candidate.id,
         filename,

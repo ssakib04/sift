@@ -20,20 +20,17 @@ export function RecruiterGate({ children }: { children: ReactNode }) {
       setReady(true);
       return;
     }
-    setReady(false);
     if (!recruiterToken()) {
+      setReady(false);
       router.replace(`/login?next=${encodeURIComponent(pathname)}`);
       return;
     }
+    setReady(true);
     let cancelled = false;
     apiRequest("/api/v1/auth/me")
-      .then(() => {
-        if (!cancelled) {
-          setReady(true);
-        }
-      })
       .catch(() => {
         if (!cancelled) {
+          setReady(false);
           router.replace(`/login?next=${encodeURIComponent(pathname)}`);
         }
       });

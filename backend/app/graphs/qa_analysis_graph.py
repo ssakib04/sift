@@ -6,6 +6,7 @@ from langgraph.graph import END, START, StateGraph
 from app.core.llm_fallback import FallbackLLMManager
 from app.graphs.job_creation_graph import JobGraphError, parse_json_object
 from app.graphs.state import QAAnalysisState
+from app.services.transcript_cleanup import pair_speech
 
 DIMENSIONS = ("relevance", "technical_accuracy", "completeness", "articulation")
 INTENTS = {"technical", "experience", "qualification", "clarification", "other"}
@@ -220,53 +221,16 @@ def normalize_checklist(raw: list[object]) -> list[dict[str, str]]:
 
 def segment_turns(turns: list[dict[str, object]]) -> list[dict[str, object]]:
     """Pair each recruiter question with the candidate answer that follows it."""
+    sequenced = [
+        (str(turn["speaker"]), str(turn["text"]), float(turn["start"]), float(turn["end"]))
+        for turn in turns
+    ]
+    paired = pair_speech(sequenced, unasked="The candidate spoke before a question was asked.")
     pairs: list[dict[str, object]] = []
-    question: str | None = None
-    question_start: float | None = None
-    question_end: float | None = None
-    answer_parts: list[str] = []
-    answer_start: float | None = None
-    answer_end: float | None = None
-
-    def flush() -> None:
-        nonlocal question, question_start, question_end, answer_parts, answer_start, answer_end
-        if question is None and not answer_parts:
-            return
-        asked = question or "The candidate spoke before a question was asked."
-        spoken = " ".join(answer_parts).strip()
-        start = answer_start if answer_start is not None else question_start or 0.0
-        end = answer_end if answer_end is not None else question_end or start
-        pairs.append(_blank_pair(asked, spoken, start, end))
-        question = None
-        question_start = None
-        question_end = None
-        answer_parts = []
-        answer_start = None
-        answer_end = None
-
-    for turn in turns:
-        speaker = str(turn["speaker"])
-        text = str(turn["text"]).strip()
-        if not text:
-            continue
-        if speaker == "recruiter":
-            if answer_parts:
-                flush()
-            if question:
-                question = f"{question} {text}"
-                question_end = float(turn["end"])
-                continue
-            question = text
-            question_start = float(turn["start"])
-            question_end = float(turn["end"])
-            continue
-        if not answer_parts:
-            answer_start = float(turn["start"])
-        answer_parts.append(text)
-        answer_end = float(turn["end"])
-    flush()
-    for index, pair in enumerate(pairs, start=1):
+    for index, item in enumerate(paired, start=1):
+        pair = _blank_pair(item.question, item.answer, item.start, item.end)
         pair["pair_id"] = f"QA_{index:02d}"
+        pairs.append(pair)
     return pairs
 
 

@@ -22,6 +22,7 @@ from app.models.candidate import (
 from app.models.job import JobChecklistQuery
 from app.schemas.interview_quality import InterviewQualityRead, QualityDimensionRead, QualityRecommendationRead
 from app.services.interview_score import question_covered
+from app.services.transcript_cleanup import is_disfluency_only, pair_speech, recruiter_aside, same_line, substantive
 
 DIMENSIONS: tuple[tuple[str, str], ...] = (
     ("question_effectiveness", "Question effectiveness"),
@@ -351,34 +352,12 @@ def _covered_ids(checklist: list[ChecklistTopic], speech: str, asked: list[Answe
 
 
 def _questions_from_turns(turns: list[QualityTurn]) -> list[AnsweredQuestion]:
-    asked: list[AnsweredQuestion] = []
-    question: str | None = None
-    answer: list[str] = []
-
-    def flush() -> None:
-        nonlocal question, answer
-        if question is None and not answer:
-            return
-        asked.append(AnsweredQuestion(question or "", " ".join(answer).strip()))
-        question = None
-        answer = []
-
-    for turn in turns:
-        text = turn.text.strip()
-        if not text:
-            continue
-        if turn.speaker == "recruiter":
-            if answer:
-                flush()
-            if question:
-                question = f"{question} {text}"
-                continue
-            question = text
-            continue
-        if turn.speaker == "candidate":
-            answer.append(text)
-    flush()
-    return [item for item in asked if item.question.strip()]
+    sequenced = [(turn.speaker, turn.text, turn.start, turn.end) for turn in turns]
+    return [
+        AnsweredQuestion(item.question, item.answer)
+        for item in pair_speech(sequenced)
+        if item.question.strip()
+    ]
 
 
 def _audio_check(question: str) -> bool:
@@ -431,7 +410,19 @@ def _covered(question: str, speech: str) -> bool:
 
 
 def _candidate_text(turns: list[QualityTurn]) -> str:
-    return " ".join(turn.text.strip() for turn in turns if turn.speaker == "candidate" and turn.text.strip()).strip()
+    parts: list[str] = []
+    last_prompt = ""
+    for turn in turns:
+        if turn.speaker == "recruiter":
+            if not recruiter_aside(turn.text):
+                last_prompt = turn.text
+            continue
+        if turn.speaker != "candidate" or is_disfluency_only(turn.text) or same_line(turn.text, last_prompt):
+            continue
+        spoken = substantive(turn.text)
+        if spoken:
+            parts.append(spoken)
+    return " ".join(parts).strip()
 
 
 def _tokens(text: str) -> list[str]:

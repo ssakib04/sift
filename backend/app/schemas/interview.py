@@ -156,6 +156,19 @@ class AnalysisRunRead(BaseModel):
     state: str
 
 
+class PacketLineRead(BaseModel):
+    speaker: str
+    text: str
+
+
+class InterviewPacketRead(BaseModel):
+    full_name: str
+    job_title: str
+    cv_text: str
+    questions: list[str]
+    lines: list[PacketLineRead]
+
+
 class AnalysisRead(BaseModel):
     relevance: float
     technical_accuracy: float

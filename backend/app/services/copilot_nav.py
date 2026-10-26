@@ -6,11 +6,11 @@ STATIC_PLACES: dict[str, tuple[str, str]] = {
     "jobs": ("/jobs#roles", "Existing roles"),
     "create": ("/jobs?view=create#create", "Create a role"),
     "candidates": ("/candidates#candidates", "Candidates"),
-    "progress": ("/progress#progress", "Progress"),
+    "interviews": ("/interviews#interviews", "Interviews"),
     "practice": ("/practice#practice", "Practice"),
 }
 
-JOB_PLACES: frozenset[str] = frozenset({"job_brief", "job_people", "portraits", "standing"})
+JOB_PLACES: frozenset[str] = frozenset({"job_brief", "job_people", "portraits", "standing", "compare"})
 PLACES: frozenset[str] = frozenset(STATIC_PLACES) | JOB_PLACES | frozenset({"policy", "person"})
 
 _ALIASES = {
@@ -22,9 +22,13 @@ _ALIASES = {
     "brief": "job_brief",
     "applicants": "job_people",
     "portraits": "portraits",
+    "comparison": "compare",
+    "compare_candidates": "compare",
     "docs": "policies",
     "policy_index": "policies",
     "candidate": "person",
+    "progress": "interviews",
+    "interview": "interviews",
 }
 
 
@@ -47,7 +51,13 @@ def job_target(place: str, job_id: uuid.UUID) -> tuple[str, str] | None:
         return f"/candidates?job={job_id}&view=people#people", "Portraits"
     if place == "standing":
         return f"/candidates?job={job_id}&view=standing#standing", "Standing"
+    if place == "compare":
+        return f"/candidates?job={job_id}&view=compare#compare", "Compare"
     return None
+
+
+def compare_target(job_id: uuid.UUID, left_id: uuid.UUID, right_id: uuid.UUID) -> str:
+    return f"/candidates?job={job_id}&view=compare&left={left_id}&right={right_id}#compare"
 
 
 def person_target(candidate_id: uuid.UUID) -> tuple[str, str]:
@@ -63,4 +73,4 @@ def ranking_target(job_id: uuid.UUID) -> str:
 
 
 def progress_target() -> str:
-    return "/progress#progress"
+    return "/interviews#interviews"

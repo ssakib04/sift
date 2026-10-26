@@ -157,7 +157,7 @@ function Desk({ snapshot, appliedAt }: { snapshot: DeskSnapshot; appliedAt: read
       label: "Interviews",
       value: snapshot.counts.interviews,
       detail: "Scheduled",
-      href: "/candidates",
+      href: "/interviews",
       icon: <CalendarIcon />,
     },
     {
@@ -328,7 +328,7 @@ function InterviewList({ interviews }: { interviews: DeskInterview[] }) {
       <div className="space-y-4 p-6 sm:p-7">
         <div className="flex items-start justify-between gap-3">
           <h2 className="font-display text-2xl font-medium tracking-[-0.02em] text-ivory">Upcoming interviews</h2>
-          <Link href="/candidates" className="shrink-0 text-sm font-semibold text-amber hover:text-peach">
+          <Link href="/interviews" className="shrink-0 text-sm font-semibold text-amber hover:text-peach">
             View all
           </Link>
         </div>

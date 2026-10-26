@@ -6,6 +6,7 @@ from typing import Literal
 
 from app.core.llm_fallback import FallbackLLMManager
 from app.graphs.job_creation_graph import JobGraphError, parse_json_object
+from app.services.transcript_cleanup import is_disfluency, is_disfluency_only
 
 GENERAL_QUESTIONS = (
     "Tell me about a recent project you are proud of.",
@@ -293,6 +294,8 @@ def thin_answer(text: str) -> bool:
     cleaned = " ".join(text.split()).strip(".! ").lower()
     if not cleaned or cleaned in _GREETINGS:
         return False
+    if is_disfluency_only(cleaned):
+        return True
     if cleaned in _THIN_PHRASES:
         return True
     words = [word.strip(",") for word in cleaned.split()]
@@ -338,6 +341,8 @@ def interruption_is_noise(heard: str, spoken: str) -> bool:
     if not cleaned or echoes_prompt(cleaned, spoken):
         return True
     words = [word.strip(".,!?") for word in cleaned.split() if word.strip(".,!?")]
+    if words and all(is_disfluency(word) for word in words):
+        return True
     return len(words) == 1 and words[0].lower() in _INTERRUPT_FILLERS
 
 

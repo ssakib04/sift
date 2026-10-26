@@ -248,6 +248,43 @@ export type JobComparison = {
   rows: ComparisonRow[];
 };
 
+export type CompareSide = {
+  candidate_id: string;
+  full_name: string;
+  rank: number | null;
+  cv_score: number | null;
+  technical_score: number | null;
+  experience_score: number | null;
+  qualification_score: number | null;
+  mcq_score: number | null;
+  interview_score: number | null;
+  interview_note: string;
+  overall_score: number | null;
+  suitability_label: string;
+  strengths: string[];
+  gaps: string[];
+};
+
+export type CandidateCompareReport = {
+  job_id: string;
+  job_title: string;
+  left: CompareSide;
+  right: CompareSide;
+  summary: string;
+  left_edge: string;
+  right_edge: string;
+  tradeoff: string;
+  source: "model" | "scores";
+};
+
+export type InterviewPacketView = {
+  full_name: string;
+  job_title: string;
+  cv_text: string;
+  questions: string[];
+  lines: { speaker: string; text: string }[];
+};
+
 export type ProgressCard = {
   candidate_id: string;
   full_name: string;
@@ -267,6 +304,21 @@ export type ProgressBoard = {
   job_title: string;
   applicant_count: number;
   columns: ProgressColumn[];
+};
+
+export type ScheduledInterview = {
+  session_id: string;
+  candidate_id: string;
+  full_name: string;
+  status: string;
+  schedule_label: string;
+  scheduled_start: string;
+};
+
+export type RoleInterviews = {
+  job_id: string;
+  job_title: string;
+  interviews: ScheduledInterview[];
 };
 
 export type CopilotChip = {
@@ -561,11 +613,12 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
   const response = await fetch(`${apiBase()}${path}`, { ...init, headers });
   if (!response.ok) {
     const payload = (await response.json().catch(() => null)) as {
-      detail?: { message?: string; error_code?: string } | string;
+      detail?: { message?: string; error_code?: string } | { msg?: string }[] | string;
     } | null;
     const detail = payload?.detail;
-    const message = typeof detail === "string" ? detail : detail?.message;
-    const code = typeof detail === "string" ? "" : detail?.error_code || "";
+    const validation = Array.isArray(detail) ? detail.find((item) => item.msg)?.msg : "";
+    const message = typeof detail === "string" ? detail : validation || (detail && "message" in detail ? detail.message : "");
+    const code = detail && !Array.isArray(detail) && typeof detail !== "string" ? detail.error_code || "" : "";
     if (
       code === "RECRUITER_AUTH_REQUIRED" &&
       typeof window !== "undefined" &&
@@ -599,6 +652,27 @@ export async function downloadAssessmentReport(candidateId: string): Promise<voi
   const anchor = document.createElement("a");
   anchor.href = url;
   anchor.download = `assessment-${candidateId}.html`;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+export async function downloadInterviewPacket(sessionId: string, token: string, kind: "html" | "pdf"): Promise<void> {
+  const path =
+    kind === "pdf"
+      ? `/api/v1/interview-sessions/${sessionId}/packet/report.pdf`
+      : `/api/v1/interview-sessions/${sessionId}/packet/report`;
+  const response = await fetch(`${apiBase()}${path}`, { headers: bearer(token) });
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { detail?: { message?: string } } | null;
+    const detail = payload?.detail;
+    throw new ApiError(detail?.message || `Request failed (${response.status})`);
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const match = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") || "");
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = match?.[1] || (kind === "pdf" ? "interview.pdf" : "interview.html");
   anchor.click();
   URL.revokeObjectURL(url);
 }

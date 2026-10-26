@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 
 import {
@@ -46,6 +46,17 @@ function visibleText(text: string, count: number): string {
   return text.slice(0, end);
 }
 
+const TURN_WINDOW = 16;
+const CONTENT_CAP = 4000;
+
+function copilotPayload(lines: ChatLine[], newest: string): { role: "user" | "assistant"; content: string }[] {
+  const history = lines
+    .filter((line) => line.content.trim().length > 0)
+    .map((line) => ({ role: line.role, content: line.content.trim().slice(0, CONTENT_CAP) }));
+  history.push({ role: "user", content: newest.trim().slice(0, CONTENT_CAP) });
+  return history.slice(-TURN_WINDOW);
+}
+
 function spoken(content: string, extra?: Pick<ChatLine, "job" | "chips">): ChatLine {
   return { role: "assistant", content, reveal: wordCount(content) === 0 ? undefined : 1, ...extra };
 }
@@ -61,7 +72,7 @@ export function PersistentChatbot() {
   const pathname = usePathname();
   const router = useRouter();
   const scroller = useRef<HTMLDivElement>(null);
-  const composer = useRef<HTMLInputElement>(null);
+  const composer = useRef<HTMLTextAreaElement>(null);
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
@@ -88,6 +99,15 @@ export function PersistentChatbot() {
       composer.current?.focus();
     }
   }, [open]);
+
+  useEffect(() => {
+    const node = composer.current;
+    if (!node) {
+      return;
+    }
+    node.style.height = "0px";
+    node.style.height = `${Math.min(node.scrollHeight, 144)}px`;
+  }, [draft, open]);
 
   useEffect(() => {
     const index = lines.findIndex((line) => line.reveal !== undefined && line.reveal < wordCount(line.content));
@@ -141,7 +161,7 @@ export function PersistentChatbot() {
   }
 
   async function send(content: string) {
-    const history = [...lines.filter((line) => line.role === "user" || line.content.length > 0), { role: "user" as const, content }];
+    const messages = copilotPayload(lines, content);
     setLines((current) => [...current, { role: "user", content }]);
     setDraft("");
     setBusy(true);
@@ -149,9 +169,7 @@ export function PersistentChatbot() {
       const result = await apiRequest<CopilotTurn>("/api/v1/copilot/messages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          messages: history.map((line) => ({ role: line.role, content: line.content })),
-        }),
+        body: JSON.stringify({ messages }),
       });
       setLines((current) => [
         ...current,
@@ -171,6 +189,16 @@ export function PersistentChatbot() {
     const content = draft.trim();
     if (!content || busy || speaking) return;
     await send(content);
+  }
+
+  function onComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key !== "Enter" || event.shiftKey) {
+      return;
+    }
+    event.preventDefault();
+    const content = draft.trim();
+    if (!content || busy || speaking) return;
+    void send(content);
   }
 
   async function onChip(chip: CopilotChip) {
@@ -289,13 +317,13 @@ export function PersistentChatbot() {
                   {settled && line.job ? <JobCard job={line.job} busy={busy || speaking} onApprove={approve} /> : null}
                   {settled && line.chips && line.chips.length > 0 ? (
                     <div className="mt-2 flex max-w-[90%] flex-wrap gap-2">
-                      {line.chips.map((chip) => (
+                      {line.chips.map((chip, chipIndex) => (
                         <button
-                          key={`${chip.kind}-${chip.label}`}
+                          key={`${chip.kind}-${chip.href}-${chip.prompt}-${chip.label}-${chipIndex}`}
                           type="button"
                           disabled={busy || speaking}
                           onClick={() => onChip(chip)}
-                          className="rounded-control border border-ivory/15 px-2 py-1 text-xs text-ivory disabled:opacity-60"
+                          className="rounded-control border border-ivory/15 px-2 py-1 text-left text-xs text-ivory disabled:opacity-60"
                         >
                           {chip.label}
                         </button>
@@ -307,13 +335,15 @@ export function PersistentChatbot() {
             })}
             {busy ? <Thinking /> : null}
           </div>
-          <form onSubmit={onSubmit} className="flex gap-2 border-t border-ivory/10 p-3">
-            <input
+          <form onSubmit={onSubmit} className="flex items-end gap-2 border-t border-ivory/10 p-3">
+            <textarea
               ref={composer}
+              rows={1}
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={onComposerKeyDown}
               placeholder="Rank candidates for a role..."
-              className="min-w-0 flex-1 rounded-control border border-ivory/15 bg-night/50 px-3 py-2 text-sm text-ivory placeholder:text-mist/70"
+              className="max-h-36 min-h-[2.5rem] min-w-0 flex-1 resize-none overflow-y-auto break-words rounded-control border border-ivory/15 bg-night/50 px-3 py-2 text-sm leading-5 text-ivory placeholder:text-mist/70"
             />
             <button type="submit" disabled={busy || speaking} className="rounded-control bg-action px-3 py-2 text-sm font-semibold text-ivory disabled:opacity-60">
               Send
@@ -325,7 +355,7 @@ export function PersistentChatbot() {
         type="button"
         aria-label={open ? "Close copilot" : "Open copilot"}
         onClick={() => setOpen((current) => !current)}
-        className="rounded-full bg-[linear-gradient(180deg,rgb(255_232_226/0.16),rgb(42_22_28/0.32))] px-5 py-2.5 text-sm font-medium tracking-[0.03em] text-ivory shadow-[0_16px_34px_rgb(16_8_12/0.28),inset_0_1px_0_rgb(255_244_240/0.42),inset_0_0_0_1px_rgb(255_228_220/0.12)] backdrop-blur-2xl"
+        className="rounded-full bg-[linear-gradient(180deg,rgb(255_232_226/0.16),rgb(42_22_28/0.32))] px-5 py-2.5 text-sm font-medium tracking-[0.03em] text-ivory shadow-[0_16px_34px_rgb(16_8_12/0.28),inset_0_1px_0_rgb(255_244_240/0.42),inset_0_0_0_1px_rgb(255_228_220/0.28),0_0_10px_rgb(255_228_220/0.2)] backdrop-blur-2xl"
       >
         Copilot
       </button>

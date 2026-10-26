@@ -1,11 +1,13 @@
+import asyncio
 import json
+import time
 from io import BytesIO
 
 import pytest
 from docx import Document
 
 from app.core.llm_fallback import FallbackLLMManager
-from app.graphs.cv_screening_graph import build_cv_screening_graph
+from app.graphs.cv_screening_graph import build_cv_screening_graph, embed_off_loop
 from app.services.embeddings import HashingEmbedder
 from tests.checklist_factory import sample_queries
 
@@ -309,3 +311,25 @@ async def test_local_model_failure_keeps_the_original_scores() -> None:
     assert by_query["Q1"]["status"] == "insufficient_evidence"
     assert by_query["Q2"]["status"] == "met"
     assert local.calls == 1
+
+
+class _SlowEmbedder(HashingEmbedder):
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        time.sleep(0.2)
+        return super().embed(texts)
+
+
+@pytest.mark.asyncio
+async def test_cv_embedding_leaves_the_event_loop_free() -> None:
+    order: list[str] = []
+
+    async def other_request() -> None:
+        await asyncio.sleep(0.02)
+        order.append("loop")
+
+    async def score() -> None:
+        await embed_off_loop(_SlowEmbedder(), ["Ada Lovelace built APIs"])
+        order.append("embed")
+
+    await asyncio.gather(score(), other_request())
+    assert order == ["loop", "embed"]

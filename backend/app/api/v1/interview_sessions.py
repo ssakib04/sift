@@ -3,6 +3,7 @@ import json
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,6 +28,8 @@ from app.schemas.interview import (
     OpenedSessionRead,
     PracticeSessionRead,
     RecruiterOpenRequest,
+    InterviewPacketRead,
+    PacketLineRead,
     SessionDetailRead,
     SessionStatusRead,
     StartInterviewRequest,
@@ -42,6 +45,7 @@ from app.services.identification import (
 from app.services.interview_practice import open_practice_session
 from app.services.interview_rooms import signal_hub
 from app.services.interview_rules import InterviewError
+from app.services.interview_packet import load_interview_packet, packet_filename, render_packet_html, render_packet_pdf
 from app.services.interview_sessions import (
     OpenedSession,
     ask_interview_copilot,
@@ -380,6 +384,63 @@ async def read_transcript(
         )
         for segment in segments
     ]
+
+
+@router.get("/{session_id}/packet", response_model=InterviewPacketRead)
+async def read_packet(
+    session_id: UUID,
+    claims: SessionClaims = Depends(_current_claims),
+    db: AsyncSession = Depends(get_session),
+) -> InterviewPacketRead:
+    try:
+        _match(claims, session_id)
+        packet = await load_interview_packet(db, claims)
+    except InterviewError as exc:
+        raise _http(exc) from exc
+    return InterviewPacketRead(
+        full_name=packet.full_name,
+        job_title=packet.job_title,
+        cv_text=packet.cv_text,
+        questions=packet.questions,
+        lines=[PacketLineRead(speaker=line.speaker, text=line.text) for line in packet.lines],
+    )
+
+
+@router.get("/{session_id}/packet/report")
+async def download_packet_html(
+    session_id: UUID,
+    claims: SessionClaims = Depends(_current_claims),
+    db: AsyncSession = Depends(get_session),
+) -> HTMLResponse:
+    try:
+        _match(claims, session_id)
+        packet = await load_interview_packet(db, claims)
+    except InterviewError as exc:
+        raise _http(exc) from exc
+    filename = packet_filename(packet, "html")
+    return HTMLResponse(
+        content=render_packet_html(packet),
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/{session_id}/packet/report.pdf")
+async def download_packet_pdf(
+    session_id: UUID,
+    claims: SessionClaims = Depends(_current_claims),
+    db: AsyncSession = Depends(get_session),
+) -> Response:
+    try:
+        _match(claims, session_id)
+        packet = await load_interview_packet(db, claims)
+    except InterviewError as exc:
+        raise _http(exc) from exc
+    filename = packet_filename(packet, "pdf")
+    return Response(
+        content=render_packet_pdf(packet),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/{session_id}/copilot", response_model=CopilotRead)

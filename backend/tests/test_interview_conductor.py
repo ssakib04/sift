@@ -385,6 +385,19 @@ async def test_a_thin_answer_asks_for_one_example_before_moving_on() -> None:
     assert advanced.covered == ()
     assert advanced.probed == ("Can you write tests?",)
 
+    filler, held = await plan_reply(
+        FallbackLLMManager(_Boom(), _Boom(), _Boom()),
+        agenda,
+        company="Sift",
+        job_title="Backend engineer",
+        profile="",
+        transcript="",
+        heard="uhm",
+    )
+    assert filler.say == "Could you walk me through an example?"
+    assert held.answers == 0
+    assert held.covered == ()
+
     follow, moved = await plan_reply(
         FallbackLLMManager(_Boom(), _Boom(), _Boom()),
         advanced,
@@ -423,6 +436,9 @@ async def test_a_refusal_moves_on_without_a_second_ask() -> None:
 def test_a_cough_is_noise_and_a_sentence_keeps_the_turn() -> None:
     spoken = "How do you test a service that writes to a database?"
     assert interruption_is_noise("uh", spoken) is True
+    assert interruption_is_noise("uhm", spoken) is True
+    assert interruption_is_noise("uhh", spoken) is True
+    assert interruption_is_noise("uhm uhh", spoken) is True
     assert interruption_is_noise("", spoken) is True
     assert interruption_is_noise(spoken, spoken) is True
     assert interruption_is_noise("I write unit tests.", spoken) is False

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import re
 from collections.abc import Awaitable, Callable
@@ -42,7 +43,7 @@ def build_cv_screening_graph(
         filename = state.get("filename") or "cv.pdf"
         data = state.get("file_bytes") or b""
         try:
-            parsed = parse_cv(filename, data)
+            parsed = await asyncio.to_thread(parse_cv, filename, data)
         except (InvalidCvError, EmptyCvError) as exc:
             return {"errors": [str(exc)], "raw_text": "", "warnings": [str(exc)], "parse_method": "failed"}
         return {
@@ -98,7 +99,7 @@ def build_cv_screening_graph(
         checklist = state.get("locked_checklist") or []
         raw_text = state.get("raw_text") or ""
         questions = [str(query["question"]) for query in checklist]
-        vectors = embedder.embed([raw_text, *questions])
+        vectors = await embed_off_loop(embedder, [raw_text, *questions])
         cv_vector = vectors[0]
         matches: list[dict[str, float | str]] = []
         for query, vector in zip(checklist, vectors[1:], strict=True):
@@ -131,7 +132,7 @@ def build_cv_screening_graph(
             if hint_values:
                 hint_line = "Evidence hints: " + "; ".join(hint_values) + "\n"
             question = str(query["question"])
-            excerpts = _top_excerpts(embedder, raw_text, question)
+            excerpts = await asyncio.to_thread(_top_excerpts, embedder, raw_text, question)
             prompt = (
                 "Evaluate the CV against this one query. Return JSON "
                 f'{{"query_id": "{query_id}", "status": "met", "confidence": 0.8, "evidence": "quote"}} . '
@@ -297,6 +298,11 @@ def build_cv_screening_graph(
 
 def _text(value: object) -> str:
     return value.strip() if isinstance(value, str) else ""
+
+
+async def embed_off_loop(embedder: Embedder, texts: list[str]) -> list[list[float]]:
+    """Embed off the API loop so a CV score cannot freeze navigation."""
+    return await asyncio.to_thread(embedder.embed, texts)
 
 
 def _texts(value: object) -> list[str]:

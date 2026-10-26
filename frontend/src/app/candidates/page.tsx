@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { Suspense, useEffect, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
+import { CandidateCompare } from "@/components/candidate-compare";
 import { AppShell } from "@/components/ui/app-shell";
 import { PageHeader } from "@/components/ui/page-header";
 import { Panel } from "@/components/ui/panel";
@@ -18,7 +19,7 @@ import {
   recruiterToken,
 } from "@/lib/api";
 
-type DeskView = "people" | "standing";
+type DeskView = "people" | "standing" | "compare";
 
 function points(value: number | null): string {
   return value === null ? "—" : value.toFixed(1);
@@ -49,7 +50,13 @@ function statusLabel(value: string): string {
 }
 
 function deskView(value: string | null): DeskView {
-  return value === "standing" ? "standing" : "people";
+  if (value === "standing") {
+    return "standing";
+  }
+  if (value === "compare") {
+    return "compare";
+  }
+  return "people";
 }
 
 function initials(name: string): string {
@@ -171,7 +178,7 @@ function RoleDesk({
 }) {
   const people = [...group.candidates].sort(byRank);
   return (
-    <div id={view === "people" ? "people" : "standing"} className="space-y-6">
+    <div id={view} className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div className="space-y-3">
           <Link href="/candidates" className="text-xs font-semibold uppercase tracking-[0.16em] text-mist hover:text-ivory">
@@ -187,9 +194,12 @@ function RoleDesk({
         <div className="flex rounded-full border border-ivory/10 bg-[#120e10]/45 p-1" role="tablist" aria-label="Role view">
           <ViewTab jobId={group.job_id} view="people" current={view} label="Candidates" />
           <ViewTab jobId={group.job_id} view="standing" current={view} label="Standing" />
+          <ViewTab jobId={group.job_id} view="compare" current={view} label="Compare" />
         </div>
       </div>
-      {view === "people" ? <PeopleGrid people={people} /> : <Standing people={people} comparison={comparison} />}
+      {view === "people" ? <PeopleGrid people={people} /> : null}
+      {view === "standing" ? <Standing people={people} comparison={comparison} /> : null}
+      {view === "compare" ? <CompareDesk jobId={group.job_id} people={people} /> : null}
     </div>
   );
 }
@@ -205,10 +215,24 @@ function ViewTab({
   current: DeskView;
   label: string;
 }) {
+  const search = useSearchParams();
   const selected = view === current;
+  const params = new URLSearchParams();
+  params.set("job", jobId);
+  params.set("view", view);
+  if (view === "compare") {
+    const left = search.get("left");
+    const right = search.get("right");
+    if (left) {
+      params.set("left", left);
+    }
+    if (right) {
+      params.set("right", right);
+    }
+  }
   return (
     <Link
-      href={`/candidates?job=${jobId}&view=${view}`}
+      href={`/candidates?${params.toString()}#${view}`}
       role="tab"
       aria-selected={selected}
       className={`rounded-full px-4 py-1.5 text-sm font-semibold ${
@@ -291,6 +315,88 @@ function Portrait({ person }: { person: CandidateRecord }) {
           Unranked
         </span>
       )}
+    </div>
+  );
+}
+
+function pairFrom(left: string | null, right: string | null, people: CandidateRecord[]): string[] {
+  const known = new Set(people.map((person) => person.id));
+  const picked: string[] = [];
+  for (const id of [left, right]) {
+    if (id && known.has(id) && !picked.includes(id)) {
+      picked.push(id);
+    }
+  }
+  return picked.slice(0, 2);
+}
+
+function nextPair(current: string[], id: string): string[] {
+  if (current.includes(id)) {
+    return current.filter((item) => item !== id);
+  }
+  if (current.length >= 2) {
+    return [current[1], id];
+  }
+  return [...current, id];
+}
+
+function CompareDesk({ jobId, people }: { jobId: string; people: CandidateRecord[] }) {
+  const search = useSearchParams();
+  const router = useRouter();
+  const picked = pairFrom(search.get("left"), search.get("right"), people);
+
+  function choose(id: string) {
+    const next = nextPair(picked, id);
+    const params = new URLSearchParams();
+    params.set("job", jobId);
+    params.set("view", "compare");
+    if (next[0]) {
+      params.set("left", next[0]);
+    }
+    if (next[1]) {
+      params.set("right", next[1]);
+    }
+    router.replace(`/candidates?${params.toString()}#compare`, { scroll: false });
+  }
+
+  return (
+    <div className="space-y-6">
+      <p className="text-sm text-mist">
+        {people.length < 2
+          ? "This role needs two applicants before a comparison can be made."
+          : "Choose two people. A third choice replaces the earlier one."}
+      </p>
+      <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
+        {people.map((person) => {
+          const name = person.full_name || "Unnamed";
+          const order = picked.indexOf(person.id);
+          const selected = order >= 0;
+          return (
+            <li key={person.id}>
+              <Panel>
+                <button
+                  type="button"
+                  aria-pressed={selected}
+                  onClick={() => choose(person.id)}
+                  className="block w-full p-3 text-left hover:bg-ivory/[0.03]"
+                >
+                  <div className={`relative rounded-[14px] ${selected ? "ring-2 ring-amber" : ""}`}>
+                    <Portrait person={person} />
+                    {selected ? (
+                      <span className="absolute bottom-2 right-2 grid h-7 w-7 place-items-center rounded-full bg-amber text-xs font-semibold text-night">
+                        {order + 1}
+                      </span>
+                    ) : null}
+                  </div>
+                  <p className="mt-3 text-center text-sm font-medium text-ivory">{name}</p>
+                </button>
+              </Panel>
+            </li>
+          );
+        })}
+      </ul>
+      {picked.length === 1 ? <p className="text-sm text-ivory">Choose one more person.</p> : null}
+      {picked.length === 2 ? <CandidateCompare leftId={picked[0]} rightId={picked[1]} /> : null}
     </div>
   );
 }

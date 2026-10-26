@@ -10,7 +10,7 @@ const LINKS = [
   { href: "/docs", label: "Policies" },
   { href: "/jobs", label: "Jobs" },
   { href: "/candidates", label: "Candidates" },
-  { href: "/progress", label: "Progress" },
+  { href: "/interviews", label: "Interviews" },
   { href: "/practice", label: "Practice" },
 ];
 

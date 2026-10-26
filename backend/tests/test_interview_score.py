@@ -50,6 +50,23 @@ def _by_key(draft: PerformanceDraft) -> dict[str, float]:
     return {item.key: item.score for item in draft.dimensions}
 
 
+def test_filler_lines_do_not_change_the_interview_score() -> None:
+    noisy = [
+        TURNS[0],
+        SpeechTurn("candidate", "uhm"),
+        SpeechTurn("recruiter", "Take your time."),
+        TURNS[1],
+        SpeechTurn("candidate", "uhh"),
+        SpeechTurn("recruiter", "Okay."),
+        TURNS[2],
+        SpeechTurn("candidate", "How do you design database indexes?"),
+        TURNS[3],
+    ]
+    assert _by_key(score_interview(noisy, [FASTAPI, INDEXES])) == _by_key(score_interview(TURNS, [FASTAPI, INDEXES]))
+    only_filler = score_interview([SpeechTurn("candidate", "uhm uhh")], [FASTAPI, INDEXES])
+    assert only_filler.overall_score == 0.0
+
+
 def test_silent_interview_scores_zero_without_assuming_speech() -> None:
     draft = score_interview([], [FASTAPI, INDEXES])
     assert draft.overall_score == 0.0

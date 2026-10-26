@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Fraunces, Source_Sans_3 } from "next/font/google";
+import localFont from "next/font/local";
 import type { ReactNode } from "react";
 
 import { PersistentChatbot } from "@/components/persistent-chatbot";
@@ -7,15 +7,21 @@ import { RecruiterGate } from "@/components/recruiter-gate";
 
 import "./globals.css";
 
-const display = Fraunces({
-  subsets: ["latin"],
+const display = localFont({
+  src: [
+    { path: "../fonts/fraunces-latin-400.woff2", weight: "400", style: "normal" },
+    { path: "../fonts/fraunces-latin-500.woff2", weight: "500", style: "normal" },
+    { path: "../fonts/fraunces-latin-600.woff2", weight: "600", style: "normal" },
+  ],
   variable: "--font-display",
   display: "swap",
 });
 
-const ui = Source_Sans_3({
-  subsets: ["latin"],
-  weight: ["400", "600"],
+const ui = localFont({
+  src: [
+    { path: "../fonts/source-sans-3-latin-400.woff2", weight: "400", style: "normal" },
+    { path: "../fonts/source-sans-3-latin-600.woff2", weight: "600", style: "normal" },
+  ],
   variable: "--font-ui",
   display: "swap",
 });

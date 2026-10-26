@@ -11,7 +11,9 @@ from app.core.config import Settings
 from app.core.database import SessionFactory, get_session
 from app.core.llm_fallback import FallbackLLMManager
 from app.models.candidate import CandidateFace
+from app.schemas.compare import CandidateCompareRead, CompareRequest
 from app.schemas.screening import CandidateGroupRead, CandidateRead, InboxPollRead
+from app.services.candidate_compare import CompareError, compare_candidates
 from app.services.face_images import candidate_photo_file
 from app.services.email_worker import ingest_inbox
 from app.services.embeddings import Embedder
@@ -54,9 +56,25 @@ async def poll_inbox(
     return InboxPollRead(state="started")
 
 
+def _compare_http(exc: CompareError) -> HTTPException:
+    return HTTPException(status_code=exc.status_code, detail={"error_code": exc.code, "message": exc.message})
+
+
 @router.get("/candidates", response_model=list[CandidateGroupRead])
 async def read_candidate_groups(session: AsyncSession = Depends(get_session)) -> list[CandidateGroupRead]:
     return await list_candidate_groups(session)
+
+
+@router.post("/candidates/compare", response_model=CandidateCompareRead)
+async def compare_candidate_pair(
+    body: CompareRequest,
+    session: AsyncSession = Depends(get_session),
+    llm: FallbackLLMManager = Depends(get_llm),
+) -> CandidateCompareRead:
+    try:
+        return await compare_candidates(session, llm, body.left_id, body.right_id)
+    except CompareError as exc:
+        raise _compare_http(exc) from exc
 
 
 @router.get("/candidates/{candidate_id}/photo")

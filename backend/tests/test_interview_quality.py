@@ -22,6 +22,23 @@ def _score(draft: QualityDraft, key: str) -> float | None:
     return next(item.score for item in draft.dimensions if item.key == key)
 
 
+def test_filler_lines_do_not_change_the_question_review() -> None:
+    noisy = [
+        TURNS[0],
+        QualityTurn("candidate", 10, 11, "uhm"),
+        QualityTurn("recruiter", 11, 12, "Take your time."),
+        TURNS[1],
+        QualityTurn("recruiter", 40, 41, "Okay."),
+        TURNS[2],
+        QualityTurn("candidate", 50, 51, "How do you design database indexes?"),
+        TURNS[3],
+    ]
+    clean = assess_interview(TURNS, [FASTAPI, INDEXES])
+    dirty = assess_interview(noisy, [FASTAPI, INDEXES])
+    assert _score(dirty, "question_effectiveness") == _score(clean, "question_effectiveness")
+    assert _score(dirty, "competency_coverage") == _score(clean, "competency_coverage")
+
+
 def test_silent_interview_does_not_judge_the_candidate() -> None:
     draft = assess_interview([], [FASTAPI, INDEXES])
     assert draft.overall_score == 0.0

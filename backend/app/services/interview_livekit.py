@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import timedelta
 
@@ -9,6 +10,8 @@ from app.services.interview_rules import InterviewError
 logger = logging.getLogger(__name__)
 TRANSCRIBER_AGENT_NAME = "sift-transcriber"
 INTERVIEWER_AGENT_NAME = "sift-interviewer"
+_listening: set[tuple[str, str]] = set()
+_dispatch_lock = asyncio.Lock()
 
 
 def issue_livekit_token(settings: Settings, *, room: str, role: str) -> tuple[str, str]:
@@ -59,6 +62,11 @@ def room_agent_dispatch(settings: Settings, room: str, *, recruiter_present: boo
     )
 
 
+def listener_already_sent(agent_names: list[str], wanted: str) -> bool:
+    """True when this room already has the listener we would send."""
+    return wanted in agent_names
+
+
 def _http_url(livekit_url: str) -> str:
     if livekit_url.startswith("wss://"):
         return "https://" + livekit_url.removeprefix("wss://")
@@ -102,8 +110,22 @@ async def _dispatch(settings: Settings, request: CreateAgentDispatchRequest) -> 
     api_secret = settings.livekit_api_secret.strip()
     if not url.startswith("wss://") or not api_key or not api_secret:
         raise InterviewError("INTERVIEW_UNAVAILABLE", "The video service is not configured.", 503)
-    client = LiveKitAPI(_http_url(url), api_key, api_secret)
-    try:
-        await client.agent_dispatch.create_dispatch(request)
-    finally:
-        await client.aclose()
+    key = (request.room, request.agent_name)
+    async with _dispatch_lock:
+        if key in _listening:
+            return
+        client = LiveKitAPI(_http_url(url), api_key, api_secret)
+        try:
+            try:
+                present = await client.agent_dispatch.list_dispatch(request.room)
+            except Exception:
+                logger.info("agent_dispatch_list_unavailable room=%s", request.room)
+                present = []
+            names = [item.agent_name for item in present]
+            if listener_already_sent(names, request.agent_name):
+                _listening.add(key)
+                return
+            await client.agent_dispatch.create_dispatch(request)
+            _listening.add(key)
+        finally:
+            await client.aclose()

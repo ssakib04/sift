@@ -9,23 +9,26 @@ from app.core.config import Settings
 from app.core.database import SessionFactory
 from app.core.llm_fallback import FallbackLLMManager
 from app.models.job import Job
-from app.schemas.copilot import CopilotMessage, CopilotPlan
+from app.schemas.copilot import CopilotMessage, CopilotPlan, CopilotTurnRequest
 from app.schemas.job import JobRead, JobVersionRead
 from app.schemas.progress import ProgressBoardRead, ProgressCardRead, ProgressColumnRead
 from app.services.copilot import (
     PLANNER_SYSTEM,
     NamedJob,
     NamedPerson,
+    conversation_transcript,
     explain_from_records,
     explain_pair,
     job_request_from_plan,
     navigate_from_records,
     offer_approve_from_records,
     offer_inbox_turn,
+    open_candidate_from_records,
     practice_turn,
     pipeline_from_boards,
     plan_from_model_text,
     rank_from_records,
+    resolve_person_query,
     run_copilot_turn,
     select_jobs,
     summarize_jobs,
@@ -280,7 +283,11 @@ def test_explain_route_opens_the_shared_role() -> None:
     omar = _person("Omar Ali", role, overall=71.0, label="Moderate fit", gap="testing", assessed=True)
     result = explain_from_records([role], [priya, omar], left_name="Priya", right_name="Omar", job_query=role.title)
     assert result.navigation is not None
-    assert result.navigation.href == f"/candidates?job={role.id}&view=people#people"
+    assert result.navigation.href == (
+        f"/candidates?job={role.id}&view=compare&left={priya.id}&right={omar.id}#compare"
+    )
+    assert result.message == "Opening the comparison of Priya Shah and Omar Ali."
+    assert result.chips[0].label == "Open comparison"
 
 
 def test_pipeline_lists_empty_roles_and_stuck_people() -> None:
@@ -310,7 +317,7 @@ def test_pipeline_lists_empty_roles_and_stuck_people() -> None:
     )
     result = pipeline_from_boards([active, empty], "summary")
     assert result.navigation is not None
-    assert result.navigation.href == "/progress#progress"
+    assert result.navigation.href == "/interviews#interviews"
     assert "Priya Shah on Senior Python Engineer" in result.message
     assert "Support Engineer" in result.message
     empty_only = pipeline_from_boards([active, empty], "empty")
@@ -354,6 +361,77 @@ def test_practice_turn_carries_the_guest_link_and_the_room() -> None:
     assert result.practice.guest_url.endswith("/invite/abc")
     assert result.navigation is not None
     assert result.navigation.href == f"/interview/{session_id}"
+
+
+def test_same_name_chips_name_the_role() -> None:
+    dancer = _job("Dancer")
+    seller = _job("Salesperson")
+    people = [_person("Shafat", dancer), _person("Shafat", seller)]
+    result = open_candidate_from_records(
+        [dancer, seller],
+        people,
+        name="Shafat",
+        job_query="",
+        utterance="show me the profile for shafat",
+    )
+    assert result.navigation is None
+    assert result.message.startswith("Which person matches Shafat?")
+    assert [chip.label for chip in result.chips] == ["Shafat · Dancer", "Shafat · Salesperson"]
+    assert {chip.kind for chip in result.chips} == {"navigate"}
+    assert all(chip.href.startswith("/candidates/") for chip in result.chips)
+
+
+def test_listing_every_shared_name_states_each_role() -> None:
+    dancer = _job("Dancer")
+    seller = _job("Salesperson")
+    result = open_candidate_from_records(
+        [dancer, seller],
+        [
+            _person("Shafat", dancer, rank=1, aggregate=0.4),
+            _person("Shafat", seller, rank=2, aggregate=0.2),
+        ],
+        name="Shafat on Dancer",
+        job_query="Dancer",
+        utterance="list all the shafat",
+    )
+    assert "Which person" not in result.message
+    assert "2 stored people match Shafat" in result.message
+    assert "Dancer" in result.message
+    assert "Salesperson" in result.message
+    assert {chip.label for chip in result.chips} == {"Shafat · Dancer", "Shafat · Salesperson"}
+
+
+def test_name_on_role_opens_that_applicant() -> None:
+    dancer = _job("Dancer")
+    seller = _job("Salesperson")
+    people = [_person("Shafat", dancer), _person("Shafat", seller)]
+    name, role = resolve_person_query("", "", "Open Shafat on Dancer")
+    result = open_candidate_from_records(
+        [dancer, seller],
+        people,
+        name=name,
+        job_query=role,
+        utterance="Open Shafat on Dancer",
+    )
+    assert result.navigation is not None
+    assert result.navigation.href.endswith("#person")
+    assert "Dancer" in result.message
+    assert "Salesperson" not in result.message
+
+
+def test_a_long_chat_keeps_the_latest_command() -> None:
+    messages = [
+        CopilotMessage(role="assistant" if index % 2 == 0 else "user", content=f"turn {index} " + ("x" * 5000))
+        for index in range(30)
+    ]
+    request = CopilotTurnRequest(messages=messages)
+    assert len(request.messages) == 16
+    assert request.messages[-1].role == "user"
+    assert request.messages[-1].content.startswith("turn 29")
+    assert len(request.messages[-1].content) == 4000
+    transcript = conversation_transcript(request.messages)
+    assert transcript.splitlines()[-1].startswith("user: turn 29")
+    assert "…" in transcript
 
 
 def test_rank_plan_reads_the_job_query() -> None:
