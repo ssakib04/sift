@@ -1,7 +1,7 @@
 from email.message import EmailMessage
 
 from app.core.config import Settings
-from app.services.invites import SmtpInviteSender, invitation_body
+from app.services.invites import SmtpInviteSender, invitation_body, invitation_html
 
 
 def test_invitation_body_congratulates_without_revealing_rank() -> None:
@@ -18,6 +18,41 @@ def test_invitation_body_congratulates_without_revealing_rank() -> None:
     assert "Wednesday, 22 October 2026, 10:00–10:45 (Asia/Dhaka)" in body
     assert "score" not in body.casefold()
     assert "rank" not in body.casefold()
+    assert "video interview" in body
+    assert "Warm regards," in body
+
+
+def test_invitation_html_is_a_letter_without_revealing_rank() -> None:
+    document = invitation_html(
+        candidate_name="Ada Lovelace",
+        job_title="Senior Python Engineer",
+        company_name="Sift",
+        url="http://localhost:3000/invite/abc",
+        when_label="Wednesday, 22 October 2026, 10:00–10:45 (Asia/Dhaka)",
+        calendar_line="A calendar invitation is attached.",
+    )
+    lowered = document.casefold()
+    assert "Dear Ada Lovelace," in document
+    assert "Join your video interview" in document
+    assert "http://localhost:3000/invite/abc" in document
+    assert "Wednesday, 22 October 2026, 10:00–10:45 (Asia/Dhaka)" in document
+    assert "Senior Python Engineer" in document
+    assert "score" not in lowered
+    assert "rank" not in lowered
+
+
+def test_invitation_html_escapes_the_name_and_role() -> None:
+    document = invitation_html(
+        candidate_name='Ada <script>',
+        job_title='Engineer & "Lead"',
+        company_name="Sift",
+        url="http://localhost:3000/invite/abc",
+        when_label="Wednesday, 22 October 2026, 10:00–10:45 (Asia/Dhaka)",
+        calendar_line="A calendar invitation is attached.",
+    )
+    assert "<script>" not in document
+    assert "Ada &lt;script&gt;" in document
+    assert "Engineer &amp; &quot;Lead&quot;" in document
 
 
 def test_smtp_sender_delivers_to_the_applicant(monkeypatch) -> None:
@@ -127,3 +162,43 @@ def test_smtp_sender_attaches_the_calendar_invite(monkeypatch) -> None:
     assert calendar[0].get_content_subtype() == "calendar"
     assert calendar[0].get_filename() == "interview.ics"
     assert b"METHOD:REQUEST" in calendar[0].get_payload(decode=True)
+
+
+def test_smtp_sender_sends_the_letter_and_the_calendar(monkeypatch) -> None:
+    sent: list[EmailMessage] = []
+
+    class FakeSMTP:
+        def __init__(self, host: str, port: int, timeout: int) -> None:
+            return None
+
+        def __enter__(self) -> "FakeSMTP":
+            return self
+
+        def __exit__(self, *args: object) -> bool:
+            return False
+
+        def send_message(self, message: EmailMessage) -> None:
+            sent.append(message)
+
+    monkeypatch.setattr("app.services.invites.smtplib.SMTP", FakeSMTP)
+    settings = Settings(
+        _env_file=None,
+        smtp_host="localhost",
+        smtp_port=1025,
+        invite_from_address="jobs@sift.local",
+        imap_username="",
+        imap_password="",
+    )
+    SmtpInviteSender(settings).send(
+        "ada@example.com",
+        "Congratulations — your interview for Engineer",
+        "Congratulations, Ada.",
+        html="<p>Join your video interview</p>",
+        attachment_ics="BEGIN:VCALENDAR\r\nMETHOD:REQUEST\r\nEND:VCALENDAR\r\n",
+    )
+    letter = sent[0].get_body(preferencelist=("html",))
+    assert letter is not None
+    assert "Join your video interview" in letter.get_content()
+    assert sent[0].get_body(preferencelist=("plain",)) is not None
+    calendar = list(sent[0].iter_attachments())
+    assert calendar[0].get_content_subtype() == "calendar"

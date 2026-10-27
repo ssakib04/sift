@@ -766,6 +766,28 @@ function Brief({
   );
 }
 
+function inviteOrder(candidates: CandidateRecord[]): CandidateRecord[] {
+  return [...candidates].sort((left, right) => {
+    const leftRank = left.rank ?? 9999;
+    const rightRank = right.rank ?? 9999;
+    if (leftRank !== rightRank) {
+      return leftRank - rightRank;
+    }
+    return (left.full_name || "").localeCompare(right.full_name || "");
+  });
+}
+
+function invitePreview(people: CandidateRecord[]): string {
+  const names = people.map((person) => person.full_name || "Unnamed");
+  if (names.length === 1) {
+    return `This sends a video interview invitation to ${names[0]}.`;
+  }
+  if (names.length === 2) {
+    return `This sends video interview invitations to ${names[0]} and ${names[1]}.`;
+  }
+  return `This sends video interview invitations to ${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}.`;
+}
+
 function Applicants({
   job,
   candidates,
@@ -785,29 +807,13 @@ function Applicants({
   onInvite: (ids: string[]) => void;
   progress: ScoringProgress | null;
 }) {
-  const [selected, setSelected] = useState<string[]>([]);
-
-  useEffect(() => {
-    setSelected(
-      candidates
-        .filter((candidate) => candidate.rank !== null && candidate.rank <= 3 && canInvite(candidate))
-        .map((candidate) => candidate.id),
-    );
-  }, [candidates]);
-
-  function chooseTop(limit: number) {
-    setSelected(
-      candidates
-        .filter((candidate) => candidate.rank !== null && candidate.rank <= limit && canInvite(candidate))
-        .map((candidate) => candidate.id),
-    );
-  }
-
-  function toggle(candidateId: string) {
-    setSelected((current) =>
-      current.includes(candidateId) ? current.filter((id) => id !== candidateId) : [...current, candidateId],
-    );
-  }
+  const [topCount, setTopCount] = useState("");
+  const [note, setNote] = useState("");
+  const ordered = inviteOrder(candidates);
+  const eligible = ordered.filter(canInvite);
+  const chosen = Number(topCount);
+  const countIsValid = Number.isInteger(chosen) && chosen >= 1 && chosen <= eligible.length;
+  const included = eligible.slice(0, countIsValid ? chosen : 0);
   const scoring = progress?.phase === "scanning" || progress?.phase === "scoring";
   const width = progress && progress.total > 0 ? Math.min(100, Math.round((progress.done / progress.total) * 100)) : 0;
   if (!ready) {
@@ -827,7 +833,7 @@ function Applicants({
           <div className="space-y-1">
             <h2 className="font-display text-2xl font-medium text-ivory">People for this role</h2>
             <p className="max-w-xl text-sm text-mist">
-              Mail a PDF or DOCX to {job.apply_email}. Subject: {job.mail_subject}. The job id {job.id} also matches. Scoring updates the ranking. Invitations go out when you send them.
+              Mail a PDF or DOCX to {job.apply_email}. Subject: {job.mail_subject}. The job id {job.id} also matches. Scoring updates the ranking. Video interview invitations go to as many people as you choose, starting at the top.
             </p>
           </div>
           <Link href={`/candidates?job=${job.id}&view=people`} className="text-sm font-semibold text-amber hover:text-peach">
@@ -874,46 +880,77 @@ function Applicants({
         ) : null}
         {candidates.length === 0 ? <p className="text-sm text-mist">No applicants yet.</p> : null}
         {candidates.length > 0 ? (
-          <div className="flex flex-wrap items-center gap-2">
-            {[3, 4, 5].map((limit) => (
-              <button
-                key={limit}
-                type="button"
-                disabled={busy}
-                onClick={() => chooseTop(limit)}
-                className={buttonClass("secondary")}
-              >
-                Top {limit}
-              </button>
-            ))}
-            <button
-              type="button"
-              disabled={busy || selected.length === 0}
-              onClick={() => onInvite(selected)}
-              className={buttonClass()}
-            >
-              Send invitations
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!Number.isInteger(chosen) || chosen < 1) {
+                setNote("Enter how many of the top should get a video interview invitation.");
+                return;
+              }
+              if (eligible.length === 0) {
+                setNote("Nobody in this ranking can be invited yet.");
+                return;
+              }
+              if (chosen > eligible.length) {
+                const noun = eligible.length === 1 ? "person can" : "people can";
+                setNote(`Only ${eligible.length} ${noun} be invited. Choose ${eligible.length} or fewer.`);
+                return;
+              }
+              setNote("");
+              onInvite(included.map((candidate) => candidate.id));
+            }}
+            className="flex flex-wrap items-end gap-3"
+          >
+            <label className="grid min-w-52 flex-1 gap-1.5 text-sm text-mist">
+              How many of the top should get a video interview invitation?
+              <input
+                type="number"
+                min={1}
+                max={Math.max(eligible.length, 1)}
+                inputMode="numeric"
+                value={topCount}
+                onChange={(event) => {
+                  setTopCount(event.target.value);
+                  setNote("");
+                }}
+                className={fieldClass}
+                disabled={busy || eligible.length === 0}
+              />
+            </label>
+            <button type="submit" disabled={busy || !countIsValid} className={buttonClass()}>
+              Send video interview invitations
             </button>
-          </div>
+            <p className="w-full text-sm text-mist">
+              {eligible.length === 0
+                ? "Nobody can be invited yet. People need a rank, an email, and no invitation already sent."
+                : `${eligible.length} ${eligible.length === 1 ? "person" : "people"} can still be invited, from the top of the ranking.`}
+            </p>
+            {countIsValid ? <p className="w-full text-sm text-ivory">{invitePreview(included)}</p> : null}
+            {note ? <p className="w-full text-sm text-ivory">{note}</p> : null}
+          </form>
         ) : null}
         <ul className="divide-y divide-ivory/10">
-          {candidates.map((candidate) => {
-            const allowed = canInvite(candidate);
-            const note = candidate.invited
+          {ordered.map((candidate) => {
+            const status = candidate.invited
               ? "Invited"
               : candidate.email.includes("@")
                 ? ""
                 : "No email on the CV";
+            const willInvite = included.some((person) => person.id === candidate.id);
             return (
               <li key={candidate.id} className="flex items-center justify-between gap-4 py-3 text-sm">
                 <div className="flex min-w-0 items-center gap-3">
                   <input
                     type="checkbox"
-                    aria-label={`Invite ${candidate.full_name || "this applicant"}`}
+                    aria-label={
+                      willInvite
+                        ? `${candidate.full_name || "This applicant"} is included from the top`
+                        : `${candidate.full_name || "This applicant"} is not included`
+                    }
                     className="h-4 w-4 accent-amber"
-                    checked={selected.includes(candidate.id)}
-                    disabled={!allowed || busy}
-                    onChange={() => toggle(candidate.id)}
+                    checked={willInvite}
+                    disabled
+                    onChange={() => undefined}
                   />
                   <Link href={`/candidates/${candidate.id}`} className="truncate font-medium text-ivory hover:text-amber">
                     {candidate.rank ? `#${candidate.rank}` : "Unranked"} · {candidate.full_name || "Unnamed"}
@@ -921,7 +958,8 @@ function Applicants({
                 </div>
                 <span className="shrink-0 text-mist">
                   {candidate.aggregate_score !== null ? candidate.aggregate_score.toFixed(2) : candidate.parse_status}
-                  {note ? ` · ${note}` : ""}
+                  {status ? ` · ${status}` : ""}
+                  {willInvite ? " · Included" : ""}
                 </span>
               </li>
             );
