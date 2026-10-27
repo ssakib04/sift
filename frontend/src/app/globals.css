@@ -4,11 +4,27 @@
 
 /* Design tokens live in tailwind.config.ts. */
 
+:root {
+  --dot-color: rgba(255, 235, 240, 0.16);
+}
+
 body,
 body.font-sans {
   color-scheme: dark;
   background: #1c1618;
   font-family: var(--font-ui), ui-sans-serif, system-ui, sans-serif;
+}
+
+.app-bg::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image: radial-gradient(var(--dot-color) 1px, transparent 1.3px);
+  background-size: 16px 16px;
+  -webkit-mask-image: linear-gradient(200deg, #000 0%, transparent 75%);
+  mask-image: linear-gradient(200deg, #000 0%, transparent 75%);
 }
 
 ::selection {
