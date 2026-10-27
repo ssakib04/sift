@@ -70,12 +70,14 @@ class Settings(BaseSettings):
     livekit_api_key: str = ""
     livekit_api_secret: str = ""
     ai_interviewer_enabled: bool = True
-    whisper_model: str = "base"
-    whisper_device: str = "cpu"
+    whisper_model: str = "base.en"
+    whisper_device: str = "auto"
+    whisper_cpu_threads: int = 4
     speech_model_dir: str = "data/speech"
     piper_voice: str = "en_GB-cori-medium"
     speech_voice_engine: str = "kokoro"
     kokoro_voice: str = "af_heart"
+    kokoro_speed: float = 1.08
     recruiter_password: str = ""
     api_docs_enabled: bool = False
     interview_duration_minutes: int = 45

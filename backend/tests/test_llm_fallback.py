@@ -195,6 +195,8 @@ async def test_brief_reply_sends_a_second_copy_when_the_first_is_slow(monkeypatc
     assert models.calls == 2
     config = models.configs[0]
     assert getattr(config, "response_mime_type", None) == "application/json"
+    level = getattr(getattr(config, "thinking_config", None), "thinking_level", None)
+    assert getattr(level, "value", level) == "MINIMAL"
 
 
 @pytest.mark.asyncio
@@ -213,6 +215,30 @@ async def test_brief_reply_does_not_duplicate_a_fast_call() -> None:
 
     assert await provider.complete_brief("ask") == '{"say": "hi"}'
     assert models.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_brief_reply_drops_thinking_when_the_model_rejects_it() -> None:
+    class Models:
+        def __init__(self) -> None:
+            self.configs: list[object] = []
+
+        async def generate_content(self, **kwargs: object) -> SimpleNamespace:
+            config = kwargs.get("config")
+            self.configs.append(config)
+            if getattr(config, "thinking_config", None) is not None:
+                error = Exception("thinking level is not supported")
+                error.code = 400
+                raise error
+            return SimpleNamespace(text='{"say": "hi"}')
+
+    models = Models()
+    provider = GeminiProvider(api_key="test-gemini", model="gemini-3.5-flash-lite")
+    provider._client = SimpleNamespace(aio=SimpleNamespace(models=models))
+
+    assert await provider.complete_brief("ask") == '{"say": "hi"}'
+    assert len(models.configs) == 2
+    assert getattr(models.configs[1], "thinking_config", None) is None
 
 
 @pytest.mark.asyncio

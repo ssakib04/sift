@@ -1,12 +1,21 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  agentPresence,
   avatarPresentation,
   elementMuted,
   isAgentAudio,
   releaseAvatar,
   shouldHandAudioToAvatar,
 } from "./agent-audio.ts";
+
+test("the interviewer presence is listening, thinking, or speaking", () => {
+  assert.equal(agentPresence("speaking"), "Speaking");
+  assert.equal(agentPresence("thinking"), "Thinking");
+  assert.equal(agentPresence("listening"), "Listening");
+  assert.equal(agentPresence("waiting"), "Listening");
+  assert.equal(agentPresence(null), "Listening");
+});
 
 test("agent audio is the remote track that is not the candidate or the recruiter", () => {
   assert.equal(isAgentAudio("sift-interviewer", "audio"), true);

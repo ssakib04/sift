@@ -52,14 +52,14 @@ const TINTS: readonly (readonly [number, number, number])[] = [
 ];
 
 const REGIONS: readonly RegionSpec[] = [
-  { x: 0.8, y: -0.06, sx: 0.17, sy: 0.22, count: 380, knots: 8, reach: 0.064, cap: 8, jitter: 0.009, pace: 2.6, tint: 2, hubs: 2, hubReach: 0.16, weight: 0.95, input: false, scatter: false },
-  { x: 0.4, y: -0.47, sx: 0.22, sy: 0.11, count: 72, knots: 4, reach: 0.11, cap: 5, jitter: 0.007, pace: 1.5, tint: 2, hubs: 2, hubReach: 0.3, weight: 0.7, input: false, scatter: false },
-  { x: 0.02, y: 0.02, sx: 0.42, sy: 0.12, count: 96, knots: 5, reach: 0.12, cap: 4, jitter: 0.006, pace: 1.1, tint: 1, hubs: 3, hubReach: 0.32, weight: 0.65, input: false, scatter: false },
-  { x: -0.64, y: 0.1, sx: 0.3, sy: 0.25, count: 58, knots: 4, reach: 0.18, cap: 4, jitter: 0.005, pace: 0.7, tint: 0, hubs: 4, hubReach: 0.42, weight: 0.6, input: true, scatter: false },
-  { x: -1.28, y: -0.3, sx: 0.2, sy: 0.18, count: 15, knots: 2, reach: 0.26, cap: 3, jitter: 0.004, pace: 0.5, tint: 0, hubs: 1, hubReach: 0.5, weight: 0.5, input: true, scatter: false },
-  { x: 0.62, y: 0.54, sx: 0.32, sy: 0.06, count: 44, knots: 3, reach: 0.1, cap: 4, jitter: 0.006, pace: 1.2, tint: 1, hubs: 1, hubReach: 0.26, weight: 0.6, input: false, scatter: false },
-  { x: 1.34, y: 0.26, sx: 0.12, sy: 0.24, count: 30, knots: 2, reach: 0.09, cap: 4, jitter: 0.008, pace: 1.7, tint: 2, hubs: 0, hubReach: 0, weight: 0.6, input: false, scatter: false },
-  { x: 0, y: 0, sx: 1.6, sy: 0.9, count: 64, knots: 1, reach: 0.34, cap: 2, jitter: 0.004, pace: 0.4, tint: 1, hubs: 0, hubReach: 0, weight: 0.4, input: false, scatter: true },
+  { x: 0.8, y: -0.06, sx: 0.28, sy: 0.36, count: 760, knots: 8, reach: 0.064, cap: 8, jitter: 0.009, pace: 2.6, tint: 2, hubs: 2, hubReach: 0.16, weight: 0.95, input: false, scatter: false },
+  { x: 0.4, y: -0.47, sx: 0.22, sy: 0.11, count: 144, knots: 4, reach: 0.11, cap: 5, jitter: 0.007, pace: 1.5, tint: 2, hubs: 2, hubReach: 0.3, weight: 0.7, input: false, scatter: false },
+  { x: 0.02, y: 0.02, sx: 0.42, sy: 0.12, count: 192, knots: 5, reach: 0.12, cap: 4, jitter: 0.006, pace: 1.1, tint: 1, hubs: 3, hubReach: 0.32, weight: 0.65, input: false, scatter: false },
+  { x: -0.64, y: 0.1, sx: 0.3, sy: 0.25, count: 116, knots: 4, reach: 0.18, cap: 4, jitter: 0.005, pace: 0.7, tint: 0, hubs: 4, hubReach: 0.42, weight: 0.6, input: true, scatter: false },
+  { x: -1.28, y: -0.3, sx: 0.2, sy: 0.18, count: 30, knots: 2, reach: 0.26, cap: 3, jitter: 0.004, pace: 0.5, tint: 0, hubs: 1, hubReach: 0.5, weight: 0.5, input: true, scatter: false },
+  { x: 0.62, y: 0.54, sx: 0.32, sy: 0.06, count: 88, knots: 3, reach: 0.1, cap: 4, jitter: 0.006, pace: 1.2, tint: 1, hubs: 1, hubReach: 0.26, weight: 0.6, input: false, scatter: false },
+  { x: 1.34, y: 0.26, sx: 0.12, sy: 0.24, count: 60, knots: 2, reach: 0.09, cap: 4, jitter: 0.008, pace: 1.7, tint: 2, hubs: 0, hubReach: 0, weight: 0.6, input: false, scatter: false },
+  { x: 0, y: 0, sx: 1.6, sy: 0.9, count: 128, knots: 1, reach: 0.34, cap: 2, jitter: 0.004, pace: 0.4, tint: 1, hubs: 0, hubReach: 0, weight: 0.4, input: false, scatter: true },
 ];
 
 const VIEW_W = 3.1;
@@ -195,8 +195,8 @@ export class NeuralField {
           this.lx[i] = x;
           this.ly[i] = y;
         } else {
-          this.lx[i] = gauss() * spec.sx * 0.42;
-          this.ly[i] = gauss() * spec.sy * 0.42;
+          this.lx[i] = gauss() * spec.sx * 0.95;
+          this.ly[i] = gauss() * spec.sy * 0.95;
         }
         this.px[i] = spec.x + region.knotX[this.knotOf[i]] + this.lx[i];
         this.py[i] = spec.y + region.knotY[this.knotOf[i]] + this.ly[i];
@@ -914,7 +914,7 @@ export class NeuralField {
           if (Math.min(2, Math.floor(twinkle * 3)) !== band) {
             continue;
           }
-          const size = spec.count > 200 ? 0.9 : 1.2;
+          const size = 1.35;
           pen.rect(ox + this.rx[i] * scale - size / 2, oy + this.ry[i] * scale - size / 2, size, size);
           any = true;
         }

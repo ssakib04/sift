@@ -4,6 +4,18 @@ export const VISEME_MODEL_URL = "/sdk/viseme-model.bin";
 export type AvatarPresentation = "scene" | "portrait";
 export type PlaybackOwner = "element" | "avatar";
 
+export type AgentPresence = "Listening" | "Thinking" | "Speaking";
+
+export function agentPresence(state: string | null | undefined): AgentPresence {
+  if (state === "speaking") {
+    return "Speaking";
+  }
+  if (state === "thinking") {
+    return "Thinking";
+  }
+  return "Listening";
+}
+
 export function isAgentAudio(identity: string, kind: string): boolean {
   return kind === "audio" && identity !== "candidate" && identity !== "recruiter";
 }

@@ -17,6 +17,7 @@ from app.services.interview_conductor import (
     keyword_turn_kind,
     note_answer,
     opening_line,
+    _prompt,
     plan_reply,
     silence_nudge,
     spoken_limit,
@@ -436,8 +437,12 @@ def test_only_short_complete_turns_end_early() -> None:
     assert ends_turn_early("Can you hear me?")
     assert ends_turn_early("Hello.")
     assert ends_turn_early("What does your team use for queues?")
+    assert ends_turn_early("I led the migration.")
     assert not ends_turn_early("So how would I do it?")
     assert not ends_turn_early("I would start with the logs")
+    assert not ends_turn_early(
+        "I shipped the billing service and then I watched the error rate and then I rolled the deploy back and then I wrote a note."
+    )
     assert not ends_turn_early("")
 
 
@@ -827,3 +832,24 @@ def test_spoken_sentences_start_with_the_first_sentence() -> None:
     parts = spoken_sentences("That is a clear example. How did you test the model before you shipped it?")
     assert parts[0] == "That is a clear example."
     assert parts[1].startswith("How did you")
+
+
+def test_a_long_sentence_starts_at_the_first_clause() -> None:
+    parts = spoken_sentences(
+        "I would look at the error rate on the billing service, then check the recent deploy before rolling it back."
+    )
+    assert parts[0] == "I would look at the error rate on the billing service,"
+    assert "recent deploy" in parts[1]
+
+
+def test_the_live_prompt_keeps_the_cv_short() -> None:
+    prompt = _prompt(
+        Agenda(questions=("Can you write tests?",)),
+        company="Sift",
+        job_title="Backend engineer",
+        profile="P" * 2000,
+        transcript="",
+        heard="I write tests.",
+    )
+    assert "P" * 600 in prompt
+    assert "P" * 601 not in prompt

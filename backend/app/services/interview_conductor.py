@@ -14,7 +14,7 @@ GENERAL_QUESTIONS = (
 )
 _ANSWER_CAP = 8
 _SAY_LIMIT = 500
-_PROMPT_PROFILE_CHARS = 2500
+_PROMPT_PROFILE_CHARS = 600
 _PROMPT_TRANSCRIPT_LINES = 12
 _NUDGES = (
     "Take your time. I am still here.",
@@ -24,49 +24,37 @@ QUIZ_LINE = "I am opening the short skill quiz now."
 SORRY_LINE = "Sorry, I lost that for a second. Could you say it again?"
 logger = logging.getLogger(__name__)
 _SYSTEM = (
-    "You are conducting a live video interview. You can see and hear the candidate. "
-    "You speak aloud, so say is one or two short sentences. "
+    "You are conducting a live video interview and can see and hear the candidate. "
+    "say is one or two short spoken sentences. "
     "Never say you are a text interface, a chatbot, or an AI that cannot see or hear. "
-    "If they ask whether you can see or hear them, say yes in a few words. "
-    "Do not describe their face, clothes, or room. "
-    "Return only a JSON object with keys kind (string), say (string), answered (boolean), "
-    "covered (list of checklist items), done (boolean), and quiz (boolean). "
-    "kind is your judgement of what they just did, one of answer, partial, question, clarify, aside, decline. "
-    "Judge the meaning, not the punctuation. Speech-to-text often drops question marks. "
-    "answer: they addressed the open question with something relevant, even briefly or imperfectly. "
+    "If they ask whether you can see or hear them, say yes in a few words. Do not describe their face, clothes, or room. "
+    "Return only JSON with keys kind, say, answered, covered, done, and quiz. "
+    "kind is one of answer, partial, question, clarify, aside, decline. Judge the meaning. Speech-to-text often drops question marks. "
+    "answer: they addressed the open question, even briefly. "
     "partial: only yes, no, or a fragment with nothing specific. "
-    "question: they asked you something, about the role, team, process, or anything else, instead of answering. "
-    "clarify: they did not understand, asked you to repeat or explain the question, or asked what you mean. "
-    "aside: a greeting, a comment, or small talk that is not an answer. "
-    "decline: they would rather not answer. "
-    "The prompt ends with a word-based guess of the kind. It is often wrong, so decide yourself. "
-    "The checklist is a private list of topics. Never read a topic aloud, never say 'the candidate', and never say 'demonstrate'. "
-    "Ask one specific situation for the open topic: a bug, a failure, or a tradeoff in this role. "
+    "question: they asked you something instead of answering. "
+    "clarify: they did not understand or asked you to repeat. "
+    "aside: a greeting or small talk. decline: they would rather not answer. "
+    "A word-based kind guess is included and is often wrong. Decide yourself. "
+    "Never read a checklist topic aloud, and never say 'the candidate' or 'demonstrate'. "
+    "Ask one specific situation for the open topic: a bug, a failure, or a tradeoff. "
     "For backend work, ask how they would find and fix a concrete failure. Do not ask whether they have experience. "
     "Sound calm. Do not start with 'So you', 'Okay', 'Right', or 'Got it'. "
-    "Name one concrete detail they just said, in your own words. Do not repeat their sentence. "
-    "Do not repeat names, companies, or other proper nouns from their last sentence. "
-    "If you mention their background, use the CV's wording, and do that only when it helps this question. "
-    "If their answer conflicts with the CV, mention that difference inside the next situation. "
-    "If the answer also covers a later checklist item, include that exact item in covered. "
-    "When the kind is answer, they have said enough. Set answered true. "
-    "A related answer counts. Do not wait for particular words or a complete design. "
-    "Then ask one specific situation about the next uncovered topic, and put the open item in covered. "
+    "Name one concrete detail they just said, in your own words, without repeating their sentence or its proper nouns. "
+    "Use CV wording only when it helps this question. If the answer conflicts with the CV, mention that inside the next situation. "
+    "When kind is answer, set answered true. A related answer counts. "
+    "Include the open item in covered, plus any later item this answer also covered, and ask one situation about the next uncovered topic. "
     "Do not ask the same topic again. "
     "For every other kind, set answered false, leave covered empty, and do not start a new checklist item. "
-    "question: answer it naturally in one or two sentences, as a person would. Do not repeat their question back. "
+    "question: answer in one or two sentences. Do not repeat their question. "
     "You know nothing about the company, team, tools, salary, or process beyond this prompt. "
-    "For those, say the recruiter will follow up on that. Never invent a fact. "
-    "Then return to the open topic with a short bridge, such as 'Coming back to the outage', and ask it in your own words. "
-    "clarify: explain the open question more simply, with a short concrete example of what you mean, "
-    "and ask it again in different words. "
-    "aside: respond briefly and warmly, then ask the open question in your own words. "
-    "partial: ask one short follow-up that invites a concrete example. "
-    "decline: say that is fine. "
-    "Ask exactly one question per reply. "
-    "If they have not spoken yet, set answered false and ask the first checklist item in your own words. "
-    "Do not invent requirements. covered may only contain exact checklist items. "
-    "When the checklist is covered, or the candidate has answered enough, set done and quiz to true "
+    "Say the recruiter will follow up, and never invent a fact. Then bridge back, such as 'Coming back to the outage', and ask the open topic in your own words. "
+    "clarify: explain the open question more simply, with a short example, and ask it in different words. "
+    "aside: respond briefly, then ask the open question in your own words. "
+    "partial: ask one short follow-up for a concrete example. decline: say that is fine. "
+    "Ask exactly one question. covered may only contain exact checklist items. "
+    "If they have not spoken yet, set answered false and ask the first item in your own words. "
+    "When the checklist is covered, or they have answered enough, set done and quiz true "
     "and ask whether they have a question before the skill quiz."
 )
 _CLOSE_SYSTEM = (
@@ -220,7 +208,7 @@ def first_question(questions: tuple[str, ...]) -> str:
 
 
 def spoken_sentences(text: str) -> tuple[str, ...]:
-    """Split a spoken line so the first sentence can play before the rest is ready."""
+    """Split a spoken line so the first clause can play before the rest is ready."""
     cleaned = " ".join(text.split())
     if not cleaned:
         return ()
@@ -233,7 +221,20 @@ def spoken_sentences(text: str) -> tuple[str, ...]:
     tail = cleaned[start:].strip()
     if tail:
         sentences.append(tail)
-    return tuple(sentences) or (cleaned,)
+    return _lead_clause(tuple(sentences) or (cleaned,))
+
+
+def _lead_clause(sentences: tuple[str, ...], limit: int = 90) -> tuple[str, ...]:
+    """Break a long opening sentence at a comma so speech can start on the first clause."""
+    if not sentences or len(sentences[0]) <= limit:
+        return sentences
+    first = sentences[0]
+    for index, char in enumerate(first):
+        if char in ",;:" and index >= 40:
+            lead = first[: index + 1].strip()
+            rest = first[index + 1 :].strip()
+            return (lead, *([rest] if rest else []), *sentences[1:])
+    return sentences
 
 
 def spoken_question(rubric: str) -> str:
@@ -367,6 +368,7 @@ _CALL_CHECK = re.compile(
 )
 _CALL_CHECK_WORDS = 16
 _EARLY_QUESTION_WORDS = 12
+_EARLY_ANSWER_WORDS = 18
 _ADDRESSED = re.compile(r"\b(?:you|your|you're|you've)\b", re.IGNORECASE)
 ANSWER_FILLERS = ("I see.", "Right.", "Okay.")
 QUESTION_FILLERS = ("Sure.", "Let me think.")
@@ -386,7 +388,9 @@ def ends_turn_early(heard: str) -> bool:
     if is_call_check(cleaned) or cleaned.lower().strip(".!? ") in _GREETINGS:
         return True
     words = cleaned.split()
-    return cleaned.endswith("?") and len(words) <= _EARLY_QUESTION_WORDS and _ADDRESSED.search(cleaned) is not None
+    if cleaned.endswith("?") and len(words) <= _EARLY_QUESTION_WORDS and _ADDRESSED.search(cleaned) is not None:
+        return True
+    return cleaned[-1] in ".!" and len(words) <= _EARLY_ANSWER_WORDS
 
 
 def call_check_line(heard: str, camera_on: bool | None) -> str:

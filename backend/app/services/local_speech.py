@@ -1,10 +1,14 @@
 import array
+import logging
+import os
 import re
 import struct
 import sys
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Protocol
+
+logger = logging.getLogger(__name__)
 
 VOICE_FILES = {
     "en_GB-cori-medium": (
@@ -44,6 +48,88 @@ def pcm16_rms(pcm: bytes) -> float:
         sample = int.from_bytes(pcm[offset : offset + 2], "little", signed=True) / 32768
         total += sample * sample
     return (total / count) ** 0.5
+
+
+def continued_in_silence(prefix: bytes, audio: bytes, threshold: float = 0.02) -> bool:
+    """True when audio is the prefix plus quiet, so the prefix transcript still covers it."""
+    if not prefix or len(audio) < len(prefix) or not audio.startswith(prefix):
+        return False
+    extra = audio[len(prefix) :]
+    if len(extra) < 2:
+        return True
+    return pcm16_rms(extra) < threshold
+
+
+def prepare_speech_runtime(cpu_threads: int = 4) -> None:
+    """Keep math libraries on a few cores so the interview does not take the whole machine."""
+    threads = str(cpu_threads if cpu_threads > 0 else 4)
+    for name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
+        os.environ.setdefault(name, threads)
+
+
+def onnx_providers() -> tuple[str, ...]:
+    """CUDA when this process can see it, otherwise the CPU provider."""
+    try:
+        import onnxruntime as ort
+
+        available = ort.get_available_providers()
+    except Exception:
+        return ("CPUExecutionProvider",)
+    if isinstance(available, (list, tuple)) and "CUDAExecutionProvider" in available:
+        return ("CUDAExecutionProvider", "CPUExecutionProvider")
+    return ("CPUExecutionProvider",)
+
+
+def onnx_session_plan(
+    available: tuple[str, ...],
+    cpu_threads: int = 4,
+) -> tuple[tuple[str, ...], int]:
+    """Providers and intra-op threads for one ONNX session. GPU sessions leave the CPU pool small."""
+    if "CUDAExecutionProvider" in available:
+        return (("CUDAExecutionProvider", "CPUExecutionProvider"), 1)
+    threads = cpu_threads if cpu_threads > 0 else 4
+    return (("CPUExecutionProvider",), threads)
+
+
+def whisper_model_kwargs(device: str, cpu_threads: int = 4) -> dict[str, object]:
+    """Load options for faster-whisper. CPU work is capped; CUDA is used when the device is cuda."""
+    options: dict[str, object] = {
+        "device": device,
+        "compute_type": "int8" if device == "cpu" else "float16",
+    }
+    if device == "cpu":
+        options["cpu_threads"] = cpu_threads if cpu_threads > 0 else 4
+        options["num_workers"] = 1
+    return options
+
+
+def whisper_transcribe_kwargs(prompt: str) -> dict[str, object]:
+    """Decode options for one answer. The speech gate already removed the silence."""
+    cleaned = prompt.strip()
+    return {
+        "language": "en",
+        "vad_filter": False,
+        "beam_size": 1,
+        "best_of": 1,
+        "condition_on_previous_text": False,
+        "without_timestamps": True,
+        "initial_prompt": cleaned or None,
+        "hotwords": cleaned or None,
+    }
+
+
+def resolve_whisper_device(requested: str) -> str:
+    """Use CUDA when the machine has it. An explicit cpu or cuda choice is left alone."""
+    choice = requested.strip().lower() or "cpu"
+    if choice != "auto":
+        return choice
+    try:
+        import ctranslate2
+
+        count = ctranslate2.get_cuda_device_count()
+    except Exception:
+        return "cpu"
+    return "cuda" if isinstance(count, int) and count > 0 else "cpu"
 
 
 def pcm16_to_float(pcm: bytes) -> list[float]:
@@ -320,18 +406,84 @@ def float_array_to_pcm16(samples: object) -> bytes:
     return (clipped * 32767).astype("<i2").tobytes()
 
 
+def synthesize_pieces(
+    engine: object,
+    text: str,
+    *,
+    voice: str,
+    speed: float,
+    language: str,
+) -> Iterator[tuple[bytes, int]]:
+    """Yield PCM as Kokoro produces it. A model without streaming returns one piece."""
+    spoken = " ".join(text.split())
+    if not spoken:
+        return
+    stream = getattr(engine, "create_stream", None)
+    yielded = False
+    if callable(stream):
+        try:
+            for item in stream(spoken, voice=voice, speed=speed, lang=language):
+                samples, rate = item[0], item[1]
+                pcm = float_array_to_pcm16(samples)
+                if not pcm:
+                    continue
+                yielded = True
+                yield pcm, int(rate)
+        except Exception:
+            logger.exception("kokoro_stream_failed")
+            if yielded:
+                return
+        else:
+            if yielded:
+                return
+    create = getattr(engine, "create", None)
+    if not callable(create):
+        return
+    samples, rate = create(spoken, voice=voice, speed=speed, lang=language)
+    pcm = float_array_to_pcm16(samples)
+    if pcm:
+        yield pcm, int(rate)
+
+
+def open_kokoro(model_path: Path, voices_path: Path, cpu_threads: int = 4):
+    """Load Kokoro on CUDA when the runtime has it, and cap CPU threads otherwise."""
+    import onnxruntime as ort
+    from kokoro_onnx import Kokoro
+
+    providers, threads = onnx_session_plan(onnx_providers(), cpu_threads)
+    original = ort.InferenceSession
+
+    def session(model: object, sess_options: object = None, providers: object = None, *args: object, **kwargs: object):
+        del args
+        options = sess_options if sess_options is not None else ort.SessionOptions()
+        intra = getattr(options, "intra_op_num_threads", None)
+        if intra == 0 or intra is None:
+            options.intra_op_num_threads = threads
+        options.inter_op_num_threads = 1
+        chosen = list(providers) if isinstance(providers, (list, tuple)) and providers else list(onnx_providers())
+        return original(model, options, providers=chosen, **kwargs)
+
+    ort.InferenceSession = session  # type: ignore[method-assign]
+    try:
+        engine = Kokoro(str(model_path), str(voices_path))
+    finally:
+        ort.InferenceSession = original  # type: ignore[method-assign]
+    return engine
+
+
 class KokoroSynthesizer:
     """Speak text with the local Kokoro model. Returns 16-bit mono PCM and its sample rate."""
 
-    def __init__(self, model_path: Path, voices_path: Path, voice: str, speed: float = 1.0) -> None:
-        from kokoro_onnx import Kokoro
-
-        self._engine = Kokoro(str(model_path), str(voices_path))
+    def __init__(self, model_path: Path, voices_path: Path, voice: str, speed: float = 1.08, cpu_threads: int = 4) -> None:
+        self._engine = open_kokoro(model_path, voices_path, cpu_threads)
         if voice not in self._engine.get_voices():
             raise ValueError(f"Unsupported Kokoro voice: {voice}")
         self._voice = voice
         self._speed = speed
         self._language = kokoro_language(voice)
+        session = getattr(self._engine, "sess", None)
+        names = session.get_providers() if session is not None and hasattr(session, "get_providers") else onnx_providers()
+        self.provider = names[0] if names else "CPUExecutionProvider"
 
     def synthesize(self, text: str) -> tuple[bytes, int]:
         spoken = " ".join(text.split())
@@ -339,6 +491,15 @@ class KokoroSynthesizer:
             return b"", _KOKORO_RATE
         samples, rate = self._engine.create(spoken, voice=self._voice, speed=self._speed, lang=self._language)
         return float_array_to_pcm16(samples), int(rate)
+
+    def iter_pcm(self, text: str) -> Iterator[tuple[bytes, int]]:
+        yield from synthesize_pieces(
+            self._engine,
+            text,
+            voice=self._voice,
+            speed=self._speed,
+            language=self._language,
+        )
 
 
 class PiperSynthesizer:
@@ -397,11 +558,10 @@ def trim_trailing_silence(pcm: bytes, sample_rate: int = 16000, threshold: float
 class WhisperRecognizer:
     """Transcribe 16-bit PCM with a local Whisper model."""
 
-    def __init__(self, model_name: str, device: str, download_root: str) -> None:
+    def __init__(self, model_name: str, device: str, download_root: str, cpu_threads: int = 4) -> None:
         from faster_whisper import WhisperModel
 
-        compute = "int8" if device == "cpu" else "float16"
-        self._model = WhisperModel(model_name, device=device, compute_type=compute, download_root=download_root)
+        self._model = WhisperModel(model_name, download_root=download_root, **whisper_model_kwargs(device, cpu_threads))
         self.prompt = ""
 
     def transcribe(self, pcm: bytes, sample_rate: int) -> str:
@@ -410,16 +570,9 @@ class WhisperRecognizer:
         samples = pcm16_to_float(trim_trailing_silence(pcm, sample_rate))
         if sample_rate != 16000:
             samples = resample_linear(samples, sample_rate, 16000)
-        prompt = self.prompt.strip()
         segments, _info = self._model.transcribe(
             np.asarray(samples, dtype=np.float32),
-            language="en",
-            vad_filter=True,
-            beam_size=1,
-            best_of=1,
-            condition_on_previous_text=False,
-            initial_prompt=prompt or None,
-            hotwords=prompt or None,
+            **whisper_transcribe_kwargs(self.prompt),
         )
         return join_segment_text(segments)
 

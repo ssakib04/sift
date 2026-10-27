@@ -176,8 +176,13 @@ services:
       PIPER_VOICE: ${PIPER_VOICE:-en_GB-cori-medium}
       SPEECH_VOICE_ENGINE: ${SPEECH_VOICE_ENGINE:-kokoro}
       KOKORO_VOICE: ${KOKORO_VOICE:-af_heart}
-      WHISPER_MODEL: ${WHISPER_MODEL:-base}
-      WHISPER_DEVICE: ${WHISPER_DEVICE:-cpu}
+      KOKORO_SPEED: ${KOKORO_SPEED:-1.08}
+      WHISPER_MODEL: ${WHISPER_MODEL:-base.en}
+      WHISPER_DEVICE: ${WHISPER_DEVICE:-auto}
+      WHISPER_CPU_THREADS: ${WHISPER_CPU_THREADS:-4}
+      OMP_NUM_THREADS: "4"
+      MKL_NUM_THREADS: "4"
+      OPENBLAS_NUM_THREADS: "4"
       COMPANY_NAME: ${COMPANY_NAME:-Sift}
     volumes:
       - speech_data:/data/speech

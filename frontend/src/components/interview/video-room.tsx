@@ -2,7 +2,7 @@
 
 import { ConnectionState, Room, RoomEvent, Track } from "livekit-client";
 import type { TranscriptTurn } from "@/lib/api";
-import { isAgentAudio } from "@/components/interview/agent-audio";
+import { agentPresence, isAgentAudio, type AgentPresence } from "@/components/interview/agent-audio";
 import { InterviewerAvatar } from "@/components/interview/interviewer-avatar";
 import { PointerEvent as ReactPointerEvent, ReactNode, useEffect, useRef, useState } from "react";
 
@@ -91,6 +91,7 @@ export function VideoRoom({
   const [attempt, setAttempt] = useState(0);
   const [hasRemote, setHasRemote] = useState(false);
   const [avatar, setAvatar] = useState(false);
+  const [presence, setPresence] = useState<AgentPresence>("Listening");
   const [avatarStream, setAvatarStream] = useState<MediaStream | null>(null);
   const [micStream, setMicStream] = useState<MediaStream | null>(null);
   const [selfPlace, setSelfPlace] = useState({ right: 16, bottom: 88 });
@@ -259,10 +260,11 @@ export function VideoRoom({
         connection.on(RoomEvent.DataReceived, (payload, _participant, _kind, topic) => {
           if (topic === "interview") {
             try {
-              const notice = JSON.parse(new TextDecoder().decode(payload)) as { type?: string };
+              const notice = JSON.parse(new TextDecoder().decode(payload)) as { type?: string; state?: string };
               if (notice.type === "avatar" && !cancelled) {
                 avatarCueRef.current = true;
                 setAvatar(true);
+                setPresence(agentPresence(notice.state));
                 setHasRemote(true);
                 report(describe(connection));
                 void connection.startAudio();
@@ -457,7 +459,15 @@ export function VideoRoom({
         className={`absolute inset-0 h-full w-full object-cover ${hasRemote && !avatar ? "" : "hidden"}`}
       />
       <audio ref={avatarAudioRef} autoPlay playsInline />
-      {avatar ? <InterviewerAvatar voice={avatarStream} heard={micStream} /> : null}
+      {avatar ? <InterviewerAvatar voice={avatarStream} heard={micStream} presence={presence} /> : null}
+      {avatar ? (
+        <p
+          aria-live="polite"
+          className="pointer-events-none absolute left-8 top-1/2 z-30 -translate-y-1/2 rounded-full border border-white/15 bg-black/60 px-3.5 py-1.5 text-[13px] font-medium uppercase tracking-[0.22em] text-white/90"
+        >
+          {presence}
+        </p>
+      ) : null}
       <div
         className={
           hasRemote
@@ -478,8 +488,8 @@ export function VideoRoom({
         />
         {hasRemote ? <p className="pointer-events-none absolute bottom-1 left-2 text-xs text-ivory">You</p> : null}
       </div>
-      <p className="absolute left-4 top-4 rounded-full bg-night/70 px-3 py-1 text-xs text-ivory">
-        {hasRemote ? remoteLabel : "You"} · {status}
+      <p className="absolute left-4 top-4 z-30 rounded-full bg-night/70 px-3 py-1 text-xs text-ivory">
+        {avatar ? `${remoteLabel} · ${presence}` : `${hasRemote ? remoteLabel : "You"} · ${status}`}
       </p>
       {blocked ? (
         <button

@@ -1,6 +1,9 @@
 import math
+import os
 import struct
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -10,7 +13,14 @@ from app.services.local_speech import (
     SpeechGate,
     ensure_kokoro_files,
     float_array_to_pcm16,
+    continued_in_silence,
     kokoro_language,
+    onnx_session_plan,
+    prepare_speech_runtime,
+    resolve_whisper_device,
+    synthesize_pieces,
+    whisper_model_kwargs,
+    whisper_transcribe_kwargs,
     is_audio_kind,
     is_video_kind,
     join_segment_text,
@@ -114,6 +124,90 @@ def test_a_short_answer_closes_sooner_than_a_story() -> None:
     for _ in range(4):
         assert ongoing.push(_tone(60_000, 1000, 0.4)) is None
     assert ongoing.push(_tone(60_000, 1000, 0.4)) is not None
+
+
+def test_silence_after_a_peek_is_the_same_utterance() -> None:
+    prefix = _tone(800, 16000, 0.4)
+    assert continued_in_silence(prefix, prefix + (b"\x00\x00" * 1600))
+    assert not continued_in_silence(prefix, prefix + _tone(800, 16000, 0.4))
+
+
+def test_cpu_whisper_is_capped_and_cuda_is_left_to_the_device() -> None:
+    cpu = whisper_model_kwargs("cpu", 4)
+    assert cpu["cpu_threads"] == 4
+    assert cpu["num_workers"] == 1
+    assert cpu["compute_type"] == "int8"
+    cuda = whisper_model_kwargs("cuda", 4)
+    assert "cpu_threads" not in cuda
+    assert cuda["device"] == "cuda"
+    assert cuda["compute_type"] == "float16"
+
+
+def test_transcription_skips_the_extra_voice_activity_pass() -> None:
+    options = whisper_transcribe_kwargs("FastAPI")
+    assert options["vad_filter"] is False
+    assert options["initial_prompt"] == "FastAPI"
+    assert options["hotwords"] == "FastAPI"
+
+
+def test_onnx_uses_cuda_when_that_provider_is_present() -> None:
+    providers, threads = onnx_session_plan(("CUDAExecutionProvider", "CPUExecutionProvider"), 4)
+    assert providers[0] == "CUDAExecutionProvider"
+    assert threads == 1
+    cpu_providers, cpu_threads = onnx_session_plan(("CPUExecutionProvider",), 4)
+    assert cpu_providers == ("CPUExecutionProvider",)
+    assert cpu_threads == 4
+
+
+def test_speech_runtime_caps_unset_thread_pools(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OMP_NUM_THREADS", raising=False)
+    monkeypatch.setenv("MKL_NUM_THREADS", "8")
+    prepare_speech_runtime(4)
+    assert os.environ["OMP_NUM_THREADS"] == "4"
+    assert os.environ["MKL_NUM_THREADS"] == "8"
+
+
+def test_whisper_device_keeps_an_explicit_choice() -> None:
+    assert resolve_whisper_device("cpu") == "cpu"
+    assert resolve_whisper_device(" CUDA ") == "cuda"
+
+
+def test_auto_whisper_uses_cuda_only_when_a_device_is_present(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "ctranslate2", SimpleNamespace(get_cuda_device_count=lambda: 1))
+    assert resolve_whisper_device("auto") == "cuda"
+    monkeypatch.setitem(sys.modules, "ctranslate2", SimpleNamespace(get_cuda_device_count=lambda: 0))
+    assert resolve_whisper_device("auto") == "cpu"
+
+    def unavailable() -> int:
+        raise RuntimeError("no gpu")
+
+    monkeypatch.setitem(sys.modules, "ctranslate2", SimpleNamespace(get_cuda_device_count=unavailable))
+    assert resolve_whisper_device("auto") == "cpu"
+
+
+def test_streamed_speech_yields_each_chunk() -> None:
+    class Engine:
+        def create_stream(self, text: str, voice: str, speed: float, lang: str):
+            yield [0.0, 0.5], 24000
+            yield [-0.25], 24000
+
+        def create(self, text: str, voice: str, speed: float, lang: str):
+            raise AssertionError(text)
+
+    pieces = list(synthesize_pieces(Engine(), "Hello there.", voice="af_heart", speed=1.08, language="en-us"))
+    assert len(pieces) == 2
+    assert pieces[0][1] == 24000
+    assert pieces[0][0]
+
+
+def test_speech_without_a_stream_returns_one_piece() -> None:
+    class Engine:
+        def create(self, text: str, voice: str, speed: float, lang: str):
+            return [0.2, -0.2], 24000
+
+    pieces = list(synthesize_pieces(Engine(), "Hello.", voice="af_heart", speed=1.08, language="en-us"))
+    assert len(pieces) == 1
+    assert pieces[0][1] == 24000
 
 
 def test_kokoro_voice_language_follows_the_voice_prefix() -> None:

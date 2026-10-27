@@ -147,6 +147,18 @@ class AnthropicProvider:
         return "".join(parts)
 
 
+def _thinking_rejected(exc: Exception) -> bool:
+    """True when a live model refuses the no-thinking setting, so the turn can be sent again without it."""
+    if _retryable_gemini_error(exc):
+        return False
+    code = getattr(exc, "code", None)
+    if code is None:
+        code = getattr(exc, "status_code", None)
+    if code not in {None, 400}:
+        return False
+    return "thinking" in str(exc).lower()
+
+
 def _retryable_gemini_error(exc: Exception) -> bool:
     code = getattr(exc, "code", None)
     if code is None:
@@ -229,6 +241,7 @@ class GeminiProvider:
             if json_reply:
                 options["response_mime_type"] = "application/json"
                 options["automatic_function_calling"] = types.AutomaticFunctionCallingConfig(disable=True)
+                options["thinking_config"] = types.ThinkingConfig(thinking_level=types.ThinkingLevel.MINIMAL)
             config = types.GenerateContentConfig(**options)
         last_error: Exception | None = None
         for attempt in range(attempts):
@@ -239,11 +252,23 @@ class GeminiProvider:
                     config=config,
                 )
             except Exception as exc:
-                last_error = exc
-                if attempt + 1 >= attempts or not _retryable_gemini_error(exc):
-                    raise
-                await asyncio.sleep(1.5 * (attempt + 1))
-                continue
+                if json_reply and "thinking_config" in options and _thinking_rejected(exc):
+                    options.pop("thinking_config", None)
+                    config = types.GenerateContentConfig(**options) if options else None
+                    try:
+                        response = await self._client.aio.models.generate_content(
+                            model=self._model,
+                            contents=prompt,
+                            config=config,
+                        )
+                    except Exception:
+                        raise
+                else:
+                    last_error = exc
+                    if attempt + 1 >= attempts or not _retryable_gemini_error(exc):
+                        raise
+                    await asyncio.sleep(1.5 * (attempt + 1))
+                    continue
             text = getattr(response, "text", None)
             if not isinstance(text, str) or not text:
                 raise LLMProviderError("Gemini returned no text content")

@@ -2,16 +2,18 @@
 
 import { useEffect, useRef } from "react";
 
+import { type AgentPresence } from "@/components/interview/agent-audio";
 import { NeuralField } from "@/components/interview/neural-field";
 
 type InterviewerAvatarProps = {
   voice: MediaStream | null;
   heard: MediaStream | null;
+  presence?: AgentPresence;
 };
 
 type Meter = { read(): number; close(): void };
 
-export function InterviewerAvatar({ voice, heard }: InterviewerAvatarProps) {
+export function InterviewerAvatar({ voice, heard, presence = "Listening" }: InterviewerAvatarProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const voiceMeter = useRef<Meter | null>(null);
   const heardMeter = useRef<Meter | null>(null);
@@ -93,8 +95,8 @@ export function InterviewerAvatar({ voice, heard }: InterviewerAvatarProps) {
   }, []);
 
   return (
-    <div className="absolute inset-0 bg-black" role="img" aria-label="AI interviewer">
-      <canvas ref={canvasRef} className="pointer-events-none absolute inset-0 h-full w-full" />
+    <div className="absolute inset-0 bg-black" role="img" aria-label={`AI interviewer, ${presence.toLowerCase()}`}>
+      <canvas ref={canvasRef} className="pointer-events-none absolute inset-0 z-0 h-full w-full" />
     </div>
   );
 }
