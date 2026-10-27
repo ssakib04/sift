@@ -10,9 +10,19 @@ from app.services.schedule import BusyWindow, overlaps
 class MemorySender:
     def __init__(self) -> None:
         self.sent: list[tuple[str, str, str, str]] = []
+        self.html: list[str] = []
 
-    def send(self, to_address: str, subject: str, body: str, *, attachment_ics: str = "") -> None:
+    def send(
+        self,
+        to_address: str,
+        subject: str,
+        body: str,
+        *,
+        html: str = "",
+        attachment_ics: str = "",
+    ) -> None:
         self.sent.append((to_address, subject, body, attachment_ics))
+        self.html.append(html)
 
 
 def _settings(**overrides: object) -> Settings:
@@ -73,6 +83,10 @@ def test_two_shortlisted_calls_do_not_overlap_and_congratulate() -> None:
     assert "http://localhost:3000/invite/ada" in ada[2]
     assert "score" not in ada[2].casefold()
     assert "rank" not in ada[2].casefold()
+    assert "Join your video interview" in sender.html[0]
+    assert "http://localhost:3000/invite/ada" in sender.html[0]
+    assert "score" not in sender.html[0].casefold()
+    assert "rank" not in sender.html[0].casefold()
     assert "METHOD:REQUEST" in ada[3]
     assert "DTSTART:20261021T040000Z" in ada[3]
     assert "DTSTART:20261021T044500Z" in grace[3]

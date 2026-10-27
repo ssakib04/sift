@@ -11,9 +11,11 @@ from app.core.database import SessionFactory, get_session
 from app.core.llm_fallback import FallbackLLMManager, LLMFallbackExhaustedError
 from app.graphs.job_creation_graph import JobGraphError
 from app.schemas.job import JobCreateRequest, JobRead, JobVersionUpdate
+from app.schemas.final_ranking import ApprovalBatchRead, ApprovalRequest, FinalRankingRead
 from app.schemas.screening import InviteBatchRead, InviteSelectionRequest, ScoringProgressRead
 from app.services.cv_upload import UploadError, UploadedCv, check_upload_count, upload_job_cvs
 from app.services.embeddings import Embedder
+from app.services.final_ranking import FinalRankError, read_final_ranking, send_final_approvals
 from app.services.invites import SmtpInviteSender
 from app.services.job_rules import ChecklistLockedError
 from app.services.job_service import approve_version, create_job, get_job, list_jobs, open_next_version, update_draft
@@ -196,6 +198,37 @@ async def send_invitations(
         raise HTTPException(status_code=status, detail={"error_code": exc.code, "message": exc.message}) from exc
     await session.commit()
     return result
+
+
+@router.get("/{job_id}/final-ranking", response_model=FinalRankingRead)
+async def read_job_final_ranking(
+    job_id: UUID,
+    session: AsyncSession = Depends(get_session),
+) -> FinalRankingRead:
+    try:
+        return await read_final_ranking(session, job_id)
+    except FinalRankError as exc:
+        raise _final_rank_http(exc) from exc
+
+
+@router.post("/{job_id}/approvals", response_model=ApprovalBatchRead)
+async def send_job_approvals(
+    job_id: UUID,
+    request: ApprovalRequest,
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_app_settings),
+) -> ApprovalBatchRead:
+    try:
+        result = await send_final_approvals(session, settings, SmtpInviteSender(settings), job_id, request.count)
+    except FinalRankError as exc:
+        raise _final_rank_http(exc) from exc
+    await session.commit()
+    return result
+
+
+def _final_rank_http(exc: FinalRankError) -> HTTPException:
+    status = 404 if exc.code == "JOB_NOT_FOUND" else 422
+    return HTTPException(status_code=status, detail={"error_code": exc.code, "message": exc.message})
 
 
 @router.post("/{job_id}/versions", response_model=JobRead, status_code=201)

@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings
 from app.models.candidate import InterviewSession
 from app.services.calendar import CalendarDraft, CalendarError, CreatedEvent, GoogleCalendarClient, build_ics
-from app.services.invites import InviteSender, invitation_body
+from app.services.invites import InviteSender, invitation_body, invitation_html
 from app.services.schedule import (
     BusyWindow,
     ScheduleError,
@@ -134,6 +134,14 @@ def reserve_call(
         candidate_email,
         f"Congratulations — your interview for {job_title}",
         invitation_body(
+            candidate_name=candidate_name,
+            job_title=job_title,
+            company_name=settings.company_name,
+            url=url,
+            when_label=when_label,
+            calendar_line=calendar_line,
+        ),
+        html=invitation_html(
             candidate_name=candidate_name,
             job_title=job_title,
             company_name=settings.company_name,

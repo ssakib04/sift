@@ -248,6 +248,30 @@ export type JobComparison = {
   rows: ComparisonRow[];
 };
 
+export type FinalRankRow = {
+  candidate_id: string;
+  full_name: string;
+  email: string;
+  rank: number;
+  overall_score: number;
+  suitability_label: string;
+  cv_score: number | null;
+  interview_score: number | null;
+  quiz_score: number | null;
+  approval_mailed_at: string | null;
+};
+
+export type FinalRanking = {
+  job_id: string;
+  job_title: string;
+  rows: FinalRankRow[];
+};
+
+export type ApprovalBatch = {
+  mailed: FinalRankRow[];
+  skipped: { candidate_id: string; full_name: string; reason: string }[];
+};
+
 export type CompareSide = {
   candidate_id: string;
   full_name: string;
