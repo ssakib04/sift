@@ -34,7 +34,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" className={`${display.variable} ${ui.variable}`}>
-      <body className="bg-umber font-sans text-ivory antialiased">
+      <body className="app-bg bg-umber font-sans text-ivory antialiased">
         <RecruiterGate>{children}</RecruiterGate>
         <PersistentChatbot />
       </body>
