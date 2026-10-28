@@ -34,6 +34,7 @@ from app.models.candidate import (
 )
 from app.models.job import Job, JobChecklistQuery, JobPosting, JobVersion, ScoringProgress
 from app.models.policy import PolicyChunk, PolicyDocument
+from app.models.question_bank import QuestionBankDocument, QuestionBankQuestion
 
 __all__ = [
     "ApplicantNotification",
@@ -69,6 +70,8 @@ __all__ = [
     "PolicyChunk",
     "PolicyDocument",
     "QAPair",
+    "QuestionBankDocument",
+    "QuestionBankQuestion",
     "QueryEvaluation",
     "ScoreSnapshot",
     "ScoringProgress",

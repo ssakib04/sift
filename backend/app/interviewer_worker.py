@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.core.config import get_settings
+from app.core.logging import configure_logging
 from app.core.llm_fallback import FallbackLLMManager, create_fallback_manager
 from app.models.candidate import Candidate, CandidateParseResult, InterviewSession
 from app.models.job import JobVersion
@@ -36,7 +37,9 @@ from app.services.interview_conductor import (
     spoken_sentences,
 )
 from app.services.interview_copilot import cv_profile_text
+from app.services.question_bank import list_question_texts, spoken_with_bank
 from app.services.interview_sessions import checklist_questions, close_interview_from_agent, save_spoken_line
+from app.services.cloud_speech import GroqRecognizer, GroqSynthesizer
 from app.services.interview_transcript import transcript_notice
 from app.services.local_speech import (
     BargeMeter,
@@ -52,6 +55,7 @@ from app.services.local_speech import (
     WhisperRecognizer,
     ensure_piper_voice,
     float_to_pcm16,
+    pcm16_rms,
     pcm16_to_float,
     is_audio_kind,
     is_video_kind,
@@ -61,15 +65,15 @@ from app.services.local_speech import (
 
 logger = logging.getLogger(__name__)
 
-_engines: tuple[WhisperRecognizer, SpeechSynthesizer] | None = None
+_engines: tuple[WhisperRecognizer | GroqRecognizer, SpeechSynthesizer] | None = None
 _LISTEN_TIMEOUT = 90.0
 _QUIET_LIMIT = 12.0
 _INTERRUPT_WAIT = 5.0
-_ANSWER_SILENCE_MS = 1600
-_SHORT_SILENCE_MS = 800
-_INTERRUPT_SILENCE_MS = 1400
-_INTERRUPT_SHORT_SILENCE_MS = 800
-_EARLY_AFTER_MS = 700
+_ANSWER_SILENCE_MS = 4000
+_SHORT_SILENCE_MS = 4000
+_INTERRUPT_SILENCE_MS = 4000
+_INTERRUPT_SHORT_SILENCE_MS = 4000
+_EARLY_AFTER_MS = 4000
 _EARLY_LONGEST_MS = 6000
 _FILLER_AFTER = 0.9
 _TURN_FAILURES = 3
@@ -82,13 +86,29 @@ class Brief:
     company_name: str
     questions: tuple[str, ...]
     profile: str
+    bank: tuple[str, ...] = ()
 
 
-def speech_engines() -> tuple[WhisperRecognizer, SpeechSynthesizer]:
-    """Load Whisper and the voice once per process. Both run on this machine."""
+def speech_engines() -> tuple[WhisperRecognizer | GroqRecognizer, SpeechSynthesizer]:
+    """Load hearing and speech once per process. Groq is used when its key is set."""
     global _engines
     if _engines is None:
         settings = get_settings()
+        if settings.groq_api_key.strip():
+            logger.info(
+                "interviewer_speech engine=groq stt=%s voice=%s",
+                settings.groq_stt_model,
+                settings.groq_tts_voice,
+            )
+            _engines = (
+                GroqRecognizer(settings.groq_api_key.strip(), settings.groq_stt_model),
+                GroqSynthesizer(
+                    settings.groq_api_key.strip(),
+                    settings.groq_tts_model,
+                    settings.groq_tts_voice,
+                ),
+            )
+            return _engines
         directory = Path(settings.speech_model_dir)
         prepare_speech_runtime(settings.whisper_cpu_threads)
         device = resolve_whisper_device(settings.whisper_device)
@@ -144,6 +164,7 @@ def _voice(
 
 def prewarm(_process: JobProcess) -> None:
     """Load the speech models before a call arrives, so the first words are not delayed."""
+    configure_logging()
     try:
         speech_engines()
     except Exception:
@@ -173,6 +194,38 @@ class CandidateEar:
                 if publication.track is not None:
                     self._on_track(publication.track, publication, participant)
 
+    def discard_pending(self) -> None:
+        """Drop microphone audio captured before this listen. A departure notice stays."""
+        departed = False
+        while True:
+            try:
+                item = self.frames.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            if item is None:
+                departed = True
+        if departed:
+            self.frames.put_nowait(None)
+
+    def take_frame(self, pcm: bytes) -> None:
+        """Keep microphone audio only while the interviewer is quiet.
+
+        Frames recorded during the question are the agent's own voice in the mic.
+        Reading them later ends the turn before the candidate has spoken.
+        """
+        if self.speaking:
+            if not self._barge.push(pcm):
+                return
+            self.interrupt.set()
+            self.speaking = False
+            self.capture = True
+            self.discard_pending()
+        else:
+            self._barge.reset()
+        if not self.capture:
+            return
+        self.frames.put_nowait(pcm)
+
     def _on_leave(self, participant: rtc.RemoteParticipant) -> None:
         if participant.identity == "candidate":
             self.candidate_present = False
@@ -195,15 +248,7 @@ class CandidateEar:
                 pcm = _frame_pcm(frame)
                 if not pcm:
                     continue
-                if self.speaking and self._barge.push(pcm):
-                    self.interrupt.set()
-                    self.speaking = False
-                    self.capture = True
-                elif not self.speaking:
-                    self._barge.reset()
-                if not self.capture:
-                    continue
-                self.frames.put_nowait(pcm)
+                self.take_frame(pcm)
         except Exception:
             logger.exception("interviewer_listen_failed")
 
@@ -212,6 +257,21 @@ class CandidateEar:
             task.cancel()
         if self._tasks:
             await asyncio.gather(*self._tasks, return_exceptions=True)
+
+
+def _with_bank(utterance: Utterance, bank: tuple[str, ...], transcript: str) -> Utterance:
+    say = spoken_with_bank(utterance.say, utterance.asks, list(bank), transcript)
+    if say == utterance.say:
+        return utterance
+    return Utterance(
+        say=say,
+        covered=utterance.covered,
+        finished=utterance.finished,
+        offer_quiz=utterance.offer_quiz,
+        answered=utterance.answered,
+        asks=utterance.asks,
+        probe=utterance.probe,
+    )
 
 
 async def load_brief(session_id: str) -> Brief | None:
@@ -239,12 +299,14 @@ async def load_brief(session_id: str) -> Brief | None:
             select(CandidateParseResult).where(CandidateParseResult.candidate_id == row.candidate.id)
         )
         raw = parse.raw_text if parse is not None and parse.status == "parsed" else ""
+        bank = tuple(await list_question_texts(db))
         return Brief(
             candidate_name=row.candidate.full_name,
             job_title=row.candidate.version.job.title,
             company_name=settings.company_name,
             questions=tuple(questions),
             profile=cv_profile_text(row.candidate.full_name, raw),
+            bank=bank,
         )
 
 
@@ -356,6 +418,7 @@ async def conduct(ctx: JobContext) -> None:
                 _keep_note(notes, asyncio.create_task(_record(ctx, "candidate", heard)))
                 await _fill_gap(ctx, ear, plan_task, filler_line(kind, turns), slot, clips)
                 utterance, agenda = await plan_task
+                utterance = _with_bank(utterance, brief.bank, "\n".join(lines))
                 failures = 0
             except Exception:
                 logger.exception("interviewer_turn_failed")
@@ -467,6 +530,13 @@ async def _finish(
     await close_interview_from_agent(ctx.room.name)
 
 
+def _silence_held(last_voice_at: float, min_wall_s: float) -> bool:
+    """True once the candidate has actually been quiet for the required pause."""
+    if min_wall_s <= 0:
+        return True
+    return time.perf_counter() - last_voice_at >= min_wall_s
+
+
 async def _listen(
     ear: CandidateEar,
     recognizer: WhisperRecognizer,
@@ -476,12 +546,15 @@ async def _listen(
     idle_seconds: float = _QUIET_LIMIT,
     silence_ms: int = _ANSWER_SILENCE_MS,
     short_silence_ms: int | None = _SHORT_SILENCE_MS,
+    min_wall_s: float | None = None,
 ) -> str | None:
     def fresh_gate() -> SpeechGate:
         return SpeechGate(silence_ms=silence_ms, short_silence_ms=short_silence_ms)
 
+    wall_s = silence_ms / 1000 if min_wall_s is None else min_wall_s
     gate = fresh_gate()
     started = time.perf_counter()
+    last_voice_at = started
     peek_task: asyncio.Task[str] | None = None
     peek_audio: bytes | None = None
     while True:
@@ -489,7 +562,7 @@ async def _listen(
             pcm = await asyncio.wait_for(ear.frames.get(), timeout=1.0)
         except TimeoutError:
             heard = _ready_early(peek_task, last_spoken)
-            if heard:
+            if heard and _silence_held(last_voice_at, wall_s):
                 return heard
             if not gate.armed and time.perf_counter() - started >= idle_seconds:
                 _forget_task(peek_task)
@@ -503,14 +576,23 @@ async def _listen(
             if getattr(ear, "candidate_present", False):
                 continue
             return None
+        if pcm16_rms(pcm) >= 0.02:
+            last_voice_at = time.perf_counter()
         audio = gate.push(pcm)
+        if audio is not None and not _silence_held(last_voice_at, wall_s):
+            _forget_task(peek_task)
+            peek_task = None
+            peek_audio = None
+            gate = fresh_gate()
+            continue
         if audio is None:
-            early = gate.early_audio(_EARLY_AFTER_MS, _EARLY_LONGEST_MS)
+            held = _silence_held(last_voice_at, wall_s)
+            early = gate.early_audio(_EARLY_AFTER_MS, _EARLY_LONGEST_MS) if held else None
             if early is not None and peek_task is None:
                 peek_audio = early
                 peek_task = asyncio.create_task(_transcribe(recognizer, early))
             heard = _ready_early(peek_task, last_spoken)
-            if heard:
+            if heard and held:
                 return heard
             if on_hold is not None and gate.wants_hold():
                 await on_hold()
@@ -774,7 +856,11 @@ async def _sentence_audio(synthesizer: SpeechSynthesizer, sentence: str, clips: 
     cached = clips.get(sentence)
     if cached is not None:
         return cached
-    audio, rate = await asyncio.to_thread(synthesizer.synthesize, sentence)
+    try:
+        audio, rate = await asyncio.to_thread(synthesizer.synthesize, sentence)
+    except Exception:
+        logger.exception("interviewer_synth_failed")
+        return b""
     return _playback_pcm(audio, rate)
 
 
@@ -825,8 +911,16 @@ async def _play_queued(ear: CandidateEar, source: rtc.AudioSource, queue: asynci
             return True
         await source.wait_for_playout()
     finally:
-        ear.speaking = False
+        _release_mic(ear)
     return ear.interrupt.is_set()
+
+
+def _release_mic(ear: CandidateEar) -> None:
+    """The question is over. Forget audio from while the agent was speaking."""
+    interrupted = ear.interrupt.is_set()
+    ear.speaking = False
+    if not interrupted:
+        ear.discard_pending()
 
 
 async def _chunk_or_stop(ear: CandidateEar, queue: asyncio.Queue[bytes | None]) -> bytes | None:
@@ -868,7 +962,7 @@ async def _play_audio(ear: CandidateEar, source: rtc.AudioSource, audio: bytes) 
             return True
         await source.wait_for_playout()
     finally:
-        ear.speaking = False
+        _release_mic(ear)
     return ear.interrupt.is_set()
 
 
@@ -988,4 +1082,5 @@ async def entrypoint(ctx: JobContext) -> None:
 
 
 if __name__ == "__main__":
+    configure_logging()
     cli.run_app(server)

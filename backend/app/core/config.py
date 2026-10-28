@@ -78,6 +78,10 @@ class Settings(BaseSettings):
     speech_voice_engine: str = "kokoro"
     kokoro_voice: str = "af_heart"
     kokoro_speed: float = 1.08
+    groq_api_key: str = ""
+    groq_stt_model: str = "whisper-large-v3-turbo"
+    groq_tts_model: str = "canopylabs/orpheus-v1-english"
+    groq_tts_voice: str = "autumn"
     recruiter_password: str = ""
     api_docs_enabled: bool = False
     interview_duration_minutes: int = 45
@@ -91,12 +95,27 @@ class Settings(BaseSettings):
     google_calendar_client_secret: str = ""
     google_calendar_refresh_token: str = ""
     google_calendar_id: str = "primary"
+    log_level: str = "INFO"
+    log_dir: str = ""
 
     @field_validator("imap_password", "smtp_password")
     @classmethod
     def _compact_app_password(cls, value: str) -> str:
         """Gmail shows app passwords in groups of four. IMAP and SMTP reject the spaces."""
         return value.replace(" ", "").strip()
+
+    @field_validator("log_level")
+    @classmethod
+    def _normalize_log_level(cls, value: str) -> str:
+        name = value.strip().upper()
+        if name not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+            raise ValueError("log_level must be DEBUG, INFO, WARNING, ERROR, or CRITICAL")
+        return name
+
+    @field_validator("log_dir")
+    @classmethod
+    def _strip_log_dir(cls, value: str) -> str:
+        return value.strip()
 
 
 @lru_cache

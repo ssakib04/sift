@@ -25,7 +25,9 @@ SORRY_LINE = "Sorry, I lost that for a second. Could you say it again?"
 logger = logging.getLogger(__name__)
 _SYSTEM = (
     "You are conducting a live video interview and can see and hear the candidate. "
-    "say is one or two short spoken sentences. "
+    "say is two spoken sentences. "
+    "The first sentence responds to what they just said and must not be a question. "
+    "The second sentence asks exactly one question. "
     "Never say you are a text interface, a chatbot, or an AI that cannot see or hear. "
     "If they ask whether you can see or hear them, say yes in a few words. Do not describe their face, clothes, or room. "
     "Return only JSON with keys kind, say, answered, covered, done, and quiz. "
@@ -39,14 +41,14 @@ _SYSTEM = (
     "Never read a checklist topic aloud, and never say 'the candidate' or 'demonstrate'. "
     "Ask one specific situation for the open topic: a bug, a failure, or a tradeoff. "
     "For backend work, ask how they would find and fix a concrete failure. Do not ask whether they have experience. "
-    "Sound calm. Do not start with 'So you', 'Okay', 'Right', or 'Got it'. "
-    "Name one concrete detail they just said, in your own words, without repeating their sentence or its proper nouns. "
+    "Sound calm. The first sentence has to stand on its own as a response. Do not open with only Okay, Right, or Got it. "
+    "In that first sentence, answer them or take up one concrete detail they just said, in your own words. Do not repeat their sentence. "
     "Use CV wording only when it helps this question. If the answer conflicts with the CV, mention that inside the next situation. "
     "When kind is answer, set answered true. A related answer counts. "
     "Include the open item in covered, plus any later item this answer also covered, and ask one situation about the next uncovered topic. "
     "Do not ask the same topic again. "
     "For every other kind, set answered false, leave covered empty, and do not start a new checklist item. "
-    "question: answer in one or two sentences. Do not repeat their question. "
+    "question: the first sentence answers what they asked. Do not repeat their question. "
     "You know nothing about the company, team, tools, salary, or process beyond this prompt. "
     "Say the recruiter will follow up, and never invent a fact. Then bridge back, such as 'Coming back to the outage', and ask the open topic in your own words. "
     "clarify: explain the open question more simply, with a short example, and ask it in different words. "
@@ -697,12 +699,16 @@ def _source(agenda: Agenda) -> tuple[str, ...]:
     return agenda.questions or GENERAL_QUESTIONS
 
 
-_FIRST_PERSON = re.compile(r"\b(i|i['’]m|i['’]ve|i['’]ll|i['’]d|my)\b", re.IGNORECASE)
+_DID_THE_WORK = re.compile(
+    r"\b(i (built|led|fixed|migrated|designed|implemented|wrote|shipped|owned|debugged|handled|deployed)|"
+    r"my (team|service|code|project|migration))\b",
+    re.IGNORECASE,
+)
 
 
 def _slips_into_first_person(say: str) -> bool:
     """True when the reply talks as if the interviewer did the candidate's work."""
-    return _FIRST_PERSON.search(say) is not None
+    return _DID_THE_WORK.search(say) is not None
 
 
 def _drop_reaction(say: str) -> str:

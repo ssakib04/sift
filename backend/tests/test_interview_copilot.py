@@ -65,6 +65,18 @@ async def test_copilot_reads_the_transcript_through_the_fallback_manager() -> No
     assert draft.profile_available is False
 
 
+@pytest.mark.asyncio
+async def test_a_related_bank_question_is_asked_as_written() -> None:
+    provider = ScriptedProvider()
+    draft = await copilot_from_transcript(
+        FallbackLLMManager(provider, provider, provider),
+        ["Docker"],
+        "candidate [0.0-5.0]: I shipped FastAPI.",
+        bank=["How do you design database indexes for Postgres?", "How have you used Docker in production?"],
+    )
+    assert draft.suggested_question == "How have you used Docker in production?"
+
+
 def test_cv_profile_keeps_the_name_and_drops_a_blank_cv() -> None:
     assert cv_profile_text("Ada Lovelace", "   ") == ""
     text = cv_profile_text("Ada Lovelace", "Skills: pgvector " + ("x" * 7000))

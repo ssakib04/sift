@@ -7,8 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.config import Settings
-from app.graphs.master_assessment_graph import suitability_label
-from app.models.candidate import Candidate, InterviewSession
+from app.graphs.master_assessment_graph import overall_from_parts, suitability_label
+from app.models.candidate import Candidate, ConsolidatedAssessment, InterviewSession
 from app.models.job import Job, JobVersion
 from app.schemas.final_ranking import ApprovalBatchRead, ApprovalSkipRead, FinalRankRead, FinalRankingRead
 from app.services.invites import InviteSender, letter_html
@@ -39,11 +39,10 @@ def pipeline_complete(
     *,
     cv_scored: bool,
     interview_ended: bool,
-    quiz_submitted: bool,
     overall_score: float | None,
 ) -> bool:
-    """A final place requires CV screening, a finished interview, a submitted quiz, and a master score."""
-    return cv_scored and interview_ended and quiz_submitted and overall_score is not None
+    """A final place requires CV screening, a finished interview, and a master score. The quiz stays separate."""
+    return cv_scored and interview_ended and overall_score is not None
 
 
 def order_finished(people: list[FinishedPerson]) -> list[FinishedPerson]:
@@ -154,11 +153,10 @@ def _person_from_candidate(candidate: Candidate) -> FinishedPerson | None:
     assessment = candidate.consolidated_assessment
     interview = candidate.interview_session
     quiz = candidate.quiz_attempt
-    overall = assessment.overall_score if assessment is not None else None
+    overall, suitability = _assessment_points(assessment)
     if not pipeline_complete(
         cv_scored=candidate.snapshot is not None,
         interview_ended=interview is not None and interview.status == "ended",
-        quiz_submitted=quiz is not None and quiz.submitted_at is not None,
         overall_score=overall,
     ):
         return None
@@ -169,11 +167,23 @@ def _person_from_candidate(candidate: Candidate) -> FinishedPerson | None:
         full_name=candidate.full_name,
         email=candidate.email,
         overall_score=overall,
-        suitability_label=suitability_label(assessment.overall_suitability if assessment is not None else ""),
+        suitability_label=suitability_label(suitability),
         cv_score=candidate.snapshot.aggregate_score if candidate.snapshot is not None else None,
         interview_score=performance.overall_score if performance is not None else None,
         quiz_score=quiz.score if quiz is not None else None,
         approval_mailed_at=candidate.approval_mailed_at,
+    )
+
+
+def _assessment_points(assessment: ConsolidatedAssessment | None) -> tuple[float | None, str]:
+    if assessment is None:
+        return None, "insufficient_evidence"
+    scores = {item.component: item.score for item in assessment.component_scores}
+    cv = scores.get("cv_screening")
+    interview = scores.get("interview_qa")
+    return overall_from_parts(
+        float(cv) if isinstance(cv, int | float) else None,
+        float(interview) if isinstance(interview, int | float) else None,
     )
 
 
@@ -213,7 +223,7 @@ async def _finished_people(session: AsyncSession, version_id: uuid.UUID) -> list
             selectinload(Candidate.snapshot),
             selectinload(Candidate.interview_session).selectinload(InterviewSession.performance),
             selectinload(Candidate.quiz_attempt),
-            selectinload(Candidate.consolidated_assessment),
+            selectinload(Candidate.consolidated_assessment).selectinload(ConsolidatedAssessment.component_scores),
         )
     )
     candidates = list((await session.scalars(statement)).unique().all())

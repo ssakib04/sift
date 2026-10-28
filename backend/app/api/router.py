@@ -14,6 +14,7 @@ from app.api.v1.jobs import router as jobs_router
 from app.api.v1.notices import router as notices_router
 from app.api.v1.policies import router as policies_router
 from app.api.v1.progress import router as progress_router
+from app.api.v1.question_bank import router as question_bank_router
 from app.api.v1.quizzes import router as quizzes_router
 from app.api.v1.screening import router as screening_router
 
@@ -23,6 +24,7 @@ api_router = APIRouter()
 api_router.include_router(health_router, tags=["health"])
 api_router.include_router(auth_router, tags=["auth"])
 api_router.include_router(policies_router, tags=["policies"], dependencies=_recruiter)
+api_router.include_router(question_bank_router, tags=["question-bank"], dependencies=_recruiter)
 api_router.include_router(jobs_router, tags=["jobs"], dependencies=_recruiter)
 api_router.include_router(copilot_router, tags=["copilot"], dependencies=_recruiter)
 api_router.include_router(screening_router, tags=["screening"], dependencies=_recruiter)

@@ -418,7 +418,6 @@ function hasMasterScores(comparison: JobComparison | undefined): comparison is J
         row.technical_dimension !== null ||
         row.experience_dimension !== null ||
         row.qualification_dimension !== null ||
-        row.mcq_score !== null ||
         row.interview_qa !== null,
     ),
   );
@@ -616,8 +615,8 @@ function Standing({ people, comparison }: { people: CandidateRecord[]; compariso
     <Panel>
       <div className="overflow-x-auto px-4 py-3">
         <p className="mb-3 text-sm text-mist">
-          Master score · CV {Math.round(comparison.cv_weight * 100)}% · Quiz {Math.round(comparison.mcq_weight * 100)}% ·
-          Interview {Math.round(comparison.interview_weight * 100)}%
+          Master score · CV {(comparison.cv_weight * 100).toFixed(1)}% · Interview{" "}
+          {(comparison.interview_weight * 100).toFixed(1)}%
         </p>
         <table className="w-full min-w-[760px] text-left text-sm">
           <thead className="text-mist">
@@ -629,7 +628,6 @@ function Standing({ people, comparison }: { people: CandidateRecord[]; compariso
               <th className="py-2 pr-3 font-semibold">Technical</th>
               <th className="py-2 pr-3 font-semibold">Experience</th>
               <th className="py-2 pr-3 font-semibold">Qualification</th>
-              <th className="py-2 pr-3 font-semibold">MCQ</th>
               <th className="py-2 pr-3 font-semibold">Interview Q&A</th>
               <th className="py-2 font-semibold">Key gap</th>
             </tr>
@@ -648,7 +646,6 @@ function Standing({ people, comparison }: { people: CandidateRecord[]; compariso
                 <td className="py-2 pr-3 text-mist">{points(row.technical_dimension)}</td>
                 <td className="py-2 pr-3 text-mist">{points(row.experience_dimension)}</td>
                 <td className="py-2 pr-3 text-mist">{points(row.qualification_dimension)}</td>
-                <td className="py-2 pr-3 text-mist">{points(row.mcq_score)}</td>
                 <td className="py-2 pr-3 text-mist">{points(row.interview_qa)}</td>
                 <td className="max-w-xs py-2 text-mist">{row.key_gap}</td>
               </tr>

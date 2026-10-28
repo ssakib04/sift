@@ -24,15 +24,15 @@ export function LiveTranscript({ turns, candidateName }: { turns: TranscriptTurn
           return (
             <li key={turn.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
               <div className={`flex max-w-[85%] flex-col ${mine ? "items-end" : "items-start"}`}>
-                <p className={`mb-1 text-xs ${mine ? "text-peach" : "text-amber"}`}>
+                <p className={`mb-1 text-xs font-semibold ${mine ? "text-amber" : "text-celadon"}`}>
                   {mine ? "You" : name}
                   {speaking ? " · speaking" : ""}
                 </p>
                 <p
-                  className={`rounded-2xl px-3 py-2 text-sm ${
+                  className={`rounded-2xl px-3 py-2 text-sm leading-5 ${
                     mine
-                      ? "rounded-br-md bg-rust/35 text-peach"
-                      : "rounded-bl-md border border-ivory/10 bg-ivory/10 text-ivory"
+                      ? "rounded-br-md bg-amber text-night"
+                      : "rounded-bl-md border border-celadon/40 bg-celadon/20 text-ivory"
                   }`}
                 >
                   {turn.text}

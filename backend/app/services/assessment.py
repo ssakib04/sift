@@ -1,3 +1,4 @@
+import re
 import uuid
 from datetime import UTC, datetime
 
@@ -13,6 +14,7 @@ from app.graphs.master_assessment_graph import (
     INTERVIEW_WEIGHT,
     MCQ_WEIGHT,
     build_master_assessment_graph,
+    overall_from_parts,
     suitability_label,
 )
 from app.models.candidate import (
@@ -25,7 +27,6 @@ from app.models.candidate import (
     EvidenceLink,
     InterviewAnalysis,
     InterviewSession,
-    McqAttempt,
     ScoreSnapshot,
 )
 from app.models.job import JobVersion
@@ -47,6 +48,7 @@ COMPONENT_ORDER = (
     "qualification_dimension",
 )
 _CITED = {"cv", "transcript"}
+_QUIZ_GAP = "Submitted MCQ score is not available."
 
 _REPORT = Environment(autoescape=select_autoescape(["html"]), trim_blocks=True, lstrip_blocks=True).from_string(
     """<!DOCTYPE html>
@@ -69,9 +71,9 @@ _REPORT = Environment(autoescape=select_autoescape(["html"]), trim_blocks=True, 
   <p><strong>{{ report.suitability_label }}</strong>
     {% if report.overall_score is not none %} · {{ "%.1f"|format(report.overall_score) }}{% endif %}
   </p>
-  <p class="muted">Weights locked at CV {{ "%.0f"|format(report.cv_weight * 100) }}%,
-    MCQ {{ "%.0f"|format(report.mcq_weight * 100) }}%,
-    interview Q&amp;A {{ "%.0f"|format(report.interview_weight * 100) }}%.
+  <p class="muted">Weights: CV {{ "%.1f"|format(report.cv_weight * 100) }}%,
+    interview Q&amp;A {{ "%.1f"|format(report.interview_weight * 100) }}%.
+    The quiz is scored separately.
     Generated {{ generated }}.</p>
   <h2>Component scores</h2>
   <table>
@@ -122,7 +124,7 @@ class AssessmentError(Exception):
 
 
 def inputs_from_candidate(candidate: Candidate) -> dict[str, object]:
-    """Load the three stored inputs. An unsubmitted quiz contributes no score."""
+    """Load the CV and the interview. The quiz is not an input to this assessment."""
     questions = {query.query_id: query.question for query in candidate.version.queries} if candidate.version is not None else {}
     analysis = candidate.interview_session.analysis if candidate.interview_session is not None else None
     qa = _qa_input(analysis)
@@ -132,7 +134,6 @@ def inputs_from_candidate(candidate: Candidate) -> dict[str, object]:
     return {
         "candidate_id": str(candidate.id),
         "cv_screening": _cv_input(candidate.snapshot, questions),
-        "mcq_score": _mcq_input(candidate.quiz_attempt),
         "qa_analysis": qa,
         "tier_notes": [],
         "fallback_flags": [],
@@ -170,7 +171,6 @@ def render_assessment_report(report: AssessmentRead) -> str:
     scores = report.component_scores
     components = [
         ("CV screening", _cell(scores.cv_screening)),
-        ("MCQ quiz", _cell(scores.mcq_quiz)),
         ("Interview Q&A", _cell(scores.interview_qa)),
         ("Technical", _cell(scores.technical_dimension)),
         ("Experience", _cell(scores.experience_dimension)),
@@ -248,17 +248,17 @@ def assessment_read(candidate: Candidate, row: ConsolidatedAssessment) -> Assess
         job_title = candidate.version.job.title
     scores = {item.component: item.score for item in row.component_scores}
     links = sorted(row.evidence_links, key=lambda item: item.sequence)
-    suitability = row.overall_suitability
+    overall, suitability = _published(scores)
     return AssessmentRead(
         candidate_id=candidate.id,
         full_name=candidate.full_name,
         job_title=job_title,
         overall_suitability=suitability,  # type: ignore[arg-type]
         suitability_label=suitability_label(suitability),
-        overall_score=row.overall_score,
+        overall_score=overall,
         component_scores=ComponentScoresRead(
             cv_screening=scores.get("cv_screening"),
-            mcq_quiz=scores.get("mcq_quiz"),
+            mcq_quiz=None,
             interview_qa=scores.get("interview_qa"),
             technical_dimension=scores.get("technical_dimension"),
             experience_dimension=scores.get("experience_dimension"),
@@ -266,7 +266,7 @@ def assessment_read(candidate: Candidate, row: ConsolidatedAssessment) -> Assess
         ),
         strengths=[item.text for item in sorted(row.strengths, key=lambda item: item.sequence)],
         weaknesses=[item.text for item in sorted(row.weaknesses, key=lambda item: item.sequence)],
-        evidence_gaps=[item.claim for item in links if item.source_type == "gap"],
+        evidence_gaps=[item.claim for item in links if item.source_type == "gap" and item.claim != _QUIZ_GAP],
         traceability=[
             TraceLinkRead(
                 claim=item.claim,
@@ -277,10 +277,10 @@ def assessment_read(candidate: Candidate, row: ConsolidatedAssessment) -> Assess
             for item in links
             if item.source_type in _CITED
         ],
-        narrative=row.narrative,
-        cv_weight=row.cv_weight,
-        mcq_weight=row.mcq_weight,
-        interview_weight=row.interview_weight,
+        narrative=_without_quiz(row.narrative),
+        cv_weight=float(CV_WEIGHT),
+        mcq_weight=float(MCQ_WEIGHT),
+        interview_weight=float(INTERVIEW_WEIGHT),
         llm_tier=row.llm_tier,
         fallback_used=row.fallback_used,
         created_at=row.created_at,
@@ -359,7 +359,6 @@ def _candidate_loader():
     assessment = selectinload(Candidate.consolidated_assessment)
     return (
         selectinload(Candidate.snapshot).selectinload(ScoreSnapshot.evaluations),
-        selectinload(Candidate.quiz_attempt),
         selectinload(Candidate.interview_session).selectinload(InterviewSession.analysis).selectinload(InterviewAnalysis.pairs),
         selectinload(Candidate.interview_session)
         .selectinload(InterviewSession.claim_verification)
@@ -415,18 +414,19 @@ def _comparison_row(candidate_id: uuid.UUID, full_name: str, row: ConsolidatedAs
         )
     scores = {item.component: item.score for item in row.component_scores}
     links = sorted(row.evidence_links, key=lambda item: item.sequence)
-    gaps = [item.claim for item in links if item.source_type == "gap"]
+    gaps = [item.claim for item in links if item.source_type == "gap" and item.claim != _QUIZ_GAP]
     weaknesses = [item.text for item in sorted(row.weaknesses, key=lambda item: item.sequence)]
+    overall, suitability = _published(scores)
     return ComparisonRowRead(
         candidate_id=candidate_id,
         full_name=full_name,
-        overall_score=row.overall_score,
-        overall_suitability=row.overall_suitability,  # type: ignore[arg-type]
-        suitability_label=suitability_label(row.overall_suitability),
+        overall_score=overall,
+        overall_suitability=suitability,  # type: ignore[arg-type]
+        suitability_label=suitability_label(suitability),
         technical_dimension=scores.get("technical_dimension"),
         experience_dimension=scores.get("experience_dimension"),
         qualification_dimension=scores.get("qualification_dimension"),
-        mcq_score=scores.get("mcq_quiz"),
+        mcq_score=None,
         interview_qa=scores.get("interview_qa"),
         key_gap=key_gap_text(gaps, weaknesses, assessed=True),
     )
@@ -452,10 +452,33 @@ def _cv_input(snapshot: ScoreSnapshot | None, questions: dict[str, str]) -> dict
     }
 
 
-def _mcq_input(attempt: McqAttempt | None) -> int | None:
-    if attempt is None or attempt.submitted_at is None or attempt.score is None:
-        return None
-    return attempt.score
+def _without_quiz(narrative: str) -> str:
+    """Remove quiz results from a stored assessment. The interview score in the same sentence stays."""
+    text = re.sub(
+        r"(?i)(?:a (?:low |high )?score of\s+)?[\d.]+\s+on the (?:MCQ quiz|skill quiz|quiz)\b(?:\s+and\s+)?",
+        "",
+        narrative,
+    )
+    text = re.sub(r"(?i),?\s*the MCQ quiz at [\d.]+ percent \([^)]*\)\s*,?", "", text)
+    parts = re.split(r"(?<=[.!?])\s+", text.strip())
+    kept: list[str] = []
+    for part in parts:
+        if "quiz" in part.casefold() or "mcq" in part.casefold():
+            continue
+        cleaned = re.sub(r"\s{2,}", " ", part).strip()
+        cleaned = re.sub(r"\s+([,.])", r"\1", cleaned)
+        if re.search(r"[A-Za-z]", cleaned):
+            kept.append(cleaned)
+    return " ".join(kept).strip()
+
+
+def _published(scores: dict[str, float | None]) -> tuple[float | None, str]:
+    cv = scores.get("cv_screening")
+    interview = scores.get("interview_qa")
+    return overall_from_parts(
+        float(cv) if isinstance(cv, int | float) else None,
+        float(interview) if isinstance(interview, int | float) else None,
+    )
 
 
 def _qa_input(analysis: InterviewAnalysis | None) -> dict[str, object] | None:

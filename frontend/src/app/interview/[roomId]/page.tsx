@@ -5,11 +5,12 @@ import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
 import { CvPacket } from "@/components/interview/cv-packet";
-import { IdentityPanel } from "@/components/interview/identity-panel";
+import { IdentityPanel, faceVerdict } from "@/components/interview/identity-panel";
 import { InCallCopilot } from "@/components/interview/in-call-copilot";
 import { LiveTranscript } from "@/components/interview/live-transcript";
 import { McqQuizModal } from "@/components/interview/mcq-quiz-modal";
 import { VideoRoom } from "@/components/interview/video-room";
+import { Atmosphere, RoomSwitch } from "@/components/ui/atmosphere";
 import { buttonClass } from "@/components/ui/button";
 import {
   CopilotAnswer,
@@ -245,35 +246,46 @@ export default function InterviewPage() {
   }
 
   async function endCall() {
+    const candidateId = detail?.candidate_id || "";
     setClosed(true);
     setEnding(true);
     setEndError("");
-    let leaving = false;
     try {
       await apiRequest<InterviewDetail>(`/api/v1/interview-sessions/${roomId}/end`, {
         method: "POST",
         headers: bearer(token),
       });
+      setMessage("");
+      if (candidateId) {
+        router.replace(`/candidates/${candidateId}`);
+        return;
+      }
       const next = await apiRequest<InterviewDetail>(`/api/v1/interview-sessions/${roomId}`, {
         headers: bearer(token),
       });
       setDetail(next);
-      setMessage("");
       if (next.candidate_id) {
-        leaving = true;
-        router.push(`/candidates/${next.candidate_id}`);
+        router.replace(`/candidates/${next.candidate_id}`);
+        return;
       }
+      setEnding(false);
     } catch (error: unknown) {
       const text = error instanceof Error ? error.message : "The interview could not be ended.";
       setClosed(false);
       setEndError(text);
       setMessage(text);
-    } finally {
-      if (!leaving) {
-        setEnding(false);
-      }
+      setEnding(false);
     }
   }
+
+  useEffect(() => {
+    if (role !== "recruiter" || endError || ending) {
+      return;
+    }
+    if (detail?.status === "ended" && detail.candidate_id) {
+      router.replace(`/candidates/${detail.candidate_id}`);
+    }
+  }, [detail?.candidate_id, detail?.status, endError, ending, role, router]);
 
   const ended = role === "recruiter" ? closed || detail?.status === "ended" : detail?.status === "ended";
   const inCall = Boolean(detail && livekit && token && role && !ended && !left);
@@ -341,8 +353,9 @@ export default function InterviewPage() {
   }
 
   return (
-    <div className="fixed inset-0 flex flex-col overflow-hidden bg-night text-ivory">
-      <header className="relative flex h-12 shrink-0 items-center gap-4 border-b border-ivory/10 bg-night/35 px-4 backdrop-blur-md">
+    <Atmosphere showSwitcher={false}>
+    <div className="fixed inset-0 flex flex-col overflow-hidden text-ivory">
+      <header className="relative z-30 flex h-14 shrink-0 items-center gap-4 border-b border-white/10 bg-[linear-gradient(180deg,rgb(48_24_32/0.55),rgb(18_10_14/0.28))] px-4 backdrop-blur-xl">
         {role === "recruiter" ? (
           <Link href="/candidates" className="text-sm text-mist hover:text-ivory">
             Candidates
@@ -365,17 +378,10 @@ export default function InterviewPage() {
             {copied ? "Copied" : "Copy guest link"}
           </button>
         ) : null}
+        <RoomSwitch />
         <p className="text-sm text-mist">{ended ? "Ended" : connection || "Opening"}</p>
       </header>
       {message ? <p className="relative shrink-0 px-4 py-2 text-sm text-mist">{message}</p> : null}
-      {role === "recruiter" && identification?.required && !identification.can_join ? (
-        <div className="relative shrink-0 space-y-2 border-b border-ivory/10 px-4 py-3">
-          <p className="text-sm text-ivory">{identification.message}</p>
-          <button type="button" disabled={admitting} onClick={() => void admitCandidate()} className={buttonClass()}>
-            Let them in
-          </button>
-        </div>
-      ) : null}
       <div className="relative flex min-h-0 flex-1">
         <section className="relative min-w-0 flex-1">
           {inCall && livekit && role ? (
@@ -392,17 +398,32 @@ export default function InterviewPage() {
               onQuiz={role === "candidate" ? () => setQuizOpen(true) : undefined}
             />
           ) : null}
+          {role === "recruiter" && identification?.required && !ended ? (
+            <div className="pointer-events-none absolute right-3 top-3 z-40 w-72">
+              <div className="pointer-events-auto space-y-2 rounded-card border border-white/15 bg-[linear-gradient(180deg,rgb(48_24_32/0.82),rgb(18_10_14/0.72))] p-3 shadow-lift backdrop-blur-xl">
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-peach">
+                  {faceVerdict(identification.status).title}
+                </p>
+                <p className="text-sm text-ivory">{identification.invited_name || "Candidate"}</p>
+                <p className="text-sm text-mist">{identification.message || faceVerdict(identification.status).detail}</p>
+                {identification.invited_similarity != null || identification.similarity != null ? (
+                  <p className="text-sm text-ivory">
+                    Likeness {Math.round((identification.invited_similarity ?? identification.similarity ?? 0) * 100)}%
+                  </p>
+                ) : null}
+                {identification.can_join ? (
+                  <p className="text-sm text-ivory">They can join.</p>
+                ) : (
+                  <button type="button" disabled={admitting} onClick={() => void admitCandidate()} className={buttonClass()}>
+                    {admitting ? "Letting them in…" : "Let them in anyway"}
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : null}
           {ended && role === "recruiter" && !endError ? (
             <div className="grid h-full place-items-center px-6 text-center">
-              <div className="max-w-md space-y-3">
-                <p className="text-ivory">{ending ? "Saving the interview." : "This interview has ended."}</p>
-                <p className="text-sm text-mist">The reports are on this candidate's page.</p>
-                {!ending && detail?.candidate_id ? (
-                  <Link href={`/candidates/${detail.candidate_id}`} className="text-sm text-ivory underline">
-                    Open reports
-                  </Link>
-                ) : null}
-              </div>
+              <p className="text-ivory">{ending ? "Saving the interview." : "Opening this candidate."}</p>
             </div>
           ) : null}
           {left && !ended ? (
@@ -422,7 +443,7 @@ export default function InterviewPage() {
           ) : null}
         </section>
         {role === "recruiter" && !ended ? (
-          <aside className="hidden w-[22rem] shrink-0 flex-col border-l border-white/10 bg-[linear-gradient(180deg,rgb(40_20_26/0.36),rgb(16_10_12/0.46))] backdrop-blur-xl md:flex xl:w-[26rem]">
+          <aside className="hidden w-[22rem] shrink-0 flex-col border-l border-white/10 bg-[linear-gradient(180deg,rgb(48_24_32/0.5),rgb(18_10_14/0.38))] shadow-[inset_1px_0_0_rgb(255_220_214/0.2)] backdrop-blur-xl md:flex xl:w-[26rem]">
             <div className="flex shrink-0 border-b border-ivory/10">
               {detail?.conductor === "agent" ? null : (
                 <button
@@ -459,7 +480,13 @@ export default function InterviewPage() {
               {rail === "transcript" && detail?.conductor !== "agent" ? (
                 <LiveTranscript turns={turns} candidateName={identification?.invited_name || ""} />
               ) : null}
-              {rail === "identity" ? <IdentityPanel identification={identification} /> : null}
+              {rail === "identity" ? (
+                <IdentityPanel
+                  identification={identification}
+                  admitting={admitting}
+                  onAdmit={() => void admitCandidate()}
+                />
+              ) : null}
               {rail === "questions" ? (
                 <InCallCopilot
                   copilot={copilot}
@@ -479,5 +506,6 @@ export default function InterviewPage() {
         <McqQuizModal sessionId={roomId} token={token} onClose={() => setQuizOpen(false)} />
       ) : null}
     </div>
+    </Atmosphere>
   );
 }

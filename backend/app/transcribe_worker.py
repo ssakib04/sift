@@ -19,6 +19,7 @@ from livekit.agents import (
 )
 from livekit.agents.voice.events import UserInputTranscribedEvent
 
+from app.core.logging import configure_logging
 from app.services.interview_sessions import finish_open_line, save_spoken_line
 from app.services.interview_transcript import accepted_speaker, transcript_notice
 
@@ -172,6 +173,7 @@ class MultiUserTranscriber:
 
 @server.rtc_session(agent_name="sift-transcriber")
 async def entrypoint(ctx: JobContext) -> None:
+    configure_logging()
     from app.services.interview_sessions import speech_keyterms
 
     transcriber = MultiUserTranscriber(ctx)
@@ -199,4 +201,5 @@ async def entrypoint(ctx: JobContext) -> None:
 
 
 if __name__ == "__main__":
+    configure_logging()
     cli.run_app(server)

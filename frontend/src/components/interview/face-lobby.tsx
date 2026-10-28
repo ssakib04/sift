@@ -6,15 +6,22 @@ export function FaceLobby({
   active,
   onFrame,
   onError,
+  samples = 0,
+  sampleLimit = 8,
+  note,
 }: {
   active: boolean;
   onFrame: (imageBase64: string) => void;
   onError?: () => void;
+  samples?: number;
+  sampleLimit?: number;
+  note?: string;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const onErrorRef = useRef(onError);
   const [error, setError] = useState("");
   onErrorRef.current = onError;
+  const progress = sampleLimit > 0 ? Math.min(100, Math.round((samples / sampleLimit) * 100)) : 0;
 
   useEffect(() => {
     if (!active) {
@@ -87,9 +94,24 @@ export function FaceLobby({
   }
 
   return (
-    <div className="space-y-3">
-      <video ref={videoRef} autoPlay playsInline muted className="aspect-video w-full rounded-control bg-black object-cover" />
-      <p className="text-sm text-mist">{error || "Look at the camera. This takes a few seconds."}</p>
+    <div className="space-y-4">
+      <div className="relative mx-auto aspect-[3/4] w-full max-w-xs overflow-hidden rounded-[2rem] bg-black">
+        <video ref={videoRef} autoPlay playsInline muted className="h-full w-full object-cover" />
+        <div className="pointer-events-none absolute inset-0 grid place-items-center">
+          <div className="h-[62%] w-[72%] rounded-[50%] border-2 border-ivory shadow-[0_0_0_1px_rgb(0_0_0/0.35)]" />
+        </div>
+        <p className="absolute inset-x-0 bottom-0 bg-black/55 px-4 py-3 text-center text-sm text-ivory">
+          {error || note || "Center your face in the oval and hold still."}
+        </p>
+      </div>
+      <div className="space-y-2">
+        <div className="h-1.5 overflow-hidden rounded-full bg-ivory/10">
+          <div className="h-full bg-action" style={{ width: `${progress}%` }} />
+        </div>
+        <p className="text-center text-sm text-mist">
+          {error ? "Camera unavailable" : `Look ${Math.min(samples + 1, sampleLimit)} of ${sampleLimit}`}
+        </p>
+      </div>
     </div>
   );
 }

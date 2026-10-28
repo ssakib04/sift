@@ -1,12 +1,20 @@
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from uuid import uuid4
 
 from app.api.v1.assessments import router as assessment_router
 from app.api.v1.auth import require_recruiter
-from app.models.candidate import InterviewAnalysis, McqAttempt, QAPair, QueryEvaluation, ScoreSnapshot
+from app.models.candidate import InterviewAnalysis, QAPair, QueryEvaluation, ScoreSnapshot
 from app.schemas.assessment import AssessmentRead, ComponentScoresRead
 from app.schemas.quiz import CandidateQuizRead
-from app.services.assessment import _cv_input, _mcq_input, _qa_input, key_gap_text, render_assessment_report
+from app.services.assessment import (
+    _cv_input,
+    _qa_input,
+    _without_quiz,
+    inputs_from_candidate,
+    key_gap_text,
+    render_assessment_report,
+)
 
 
 def test_candidate_quiz_payload_has_no_master_score() -> None:
@@ -33,26 +41,22 @@ def test_assessment_routes_require_a_recruiter() -> None:
         assert require_recruiter in calls
 
 
-def test_only_a_submitted_quiz_becomes_an_input() -> None:
-    attempt = McqAttempt(
-        id=uuid4(),
-        candidate_id=uuid4(),
-        job_version_id=uuid4(),
-        questions=[],
-        answers=None,
-        correct_count=None,
-        score=80,
-        time_limit_seconds=600,
-        llm_tier="none",
-        fallback_used=False,
-        created_at=datetime.now(UTC),
-        started_at=datetime.now(UTC),
-        submitted_at=None,
+def test_a_stored_narrative_drops_the_quiz_and_keeps_the_interview() -> None:
+    text = (
+        "They ship Python services. "
+        "They recorded a low score of 20.0 on the MCQ quiz and 41.8 on the interview Q&A."
     )
-    assert _mcq_input(attempt) is None
-    assert _mcq_input(None) is None
-    attempt.submitted_at = datetime.now(UTC)
-    assert _mcq_input(attempt) == 80
+    cleaned = _without_quiz(text)
+    assert cleaned == "They ship Python services. They recorded 41.8 on the interview Q&A."
+
+
+def test_the_quiz_is_not_an_assessment_input() -> None:
+    loaded = inputs_from_candidate(
+        SimpleNamespace(id=uuid4(), version=None, interview_session=None, snapshot=None)  # type: ignore[arg-type]
+    )
+    assert "mcq_score" not in loaded
+    assert loaded["cv_screening"] is None
+    assert loaded["qa_analysis"] is None
 
 
 def test_cv_and_interview_inputs_keep_their_citations() -> None:
@@ -196,9 +200,9 @@ def test_report_html_keeps_the_citation_and_escapes_markup() -> None:
             }
         ],
         narrative="Cited source Q1: Built REST APIs using FastAPI and PostgreSQL.",
-        cv_weight=0.3,
-        mcq_weight=0.2,
-        interview_weight=0.5,
+        cv_weight=0.375,
+        mcq_weight=0,
+        interview_weight=0.625,
         llm_tier="claude",
         fallback_used=False,
         created_at=datetime(2026, 10, 16, 12, 0, tzinfo=UTC),
@@ -209,6 +213,6 @@ def test_report_html_keeps_the_citation_and_escapes_markup() -> None:
     assert "Transcript" not in html or "Q1" in html
     assert "Built REST APIs using FastAPI and PostgreSQL." in html
     assert "82.8" in html
-    assert "30%" in html
-    assert "20%" in html
-    assert "50%" in html
+    assert "37.5%" in html
+    assert "62.5%" in html
+    assert "MCQ" not in html

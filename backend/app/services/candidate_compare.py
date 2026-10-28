@@ -266,7 +266,6 @@ def _person_block(label: str, facts: CompareFacts) -> str:
     gaps = "; ".join(facts.gaps) or "none recorded"
     note = facts.interview_note or "none"
     rank = str(facts.rank) if facts.rank is not None else "not ranked"
-    quiz = str(facts.mcq_score) if facts.mcq_score is not None else "not scored"
     suitability = facts.suitability_label or "not assessed"
     return "\n".join(
         [
@@ -276,7 +275,6 @@ def _person_block(label: str, facts: CompareFacts) -> str:
             f"CV technical (0 to 1): {_shown(facts.technical_score, 2)}",
             f"CV experience (0 to 1): {_shown(facts.experience_score, 2)}",
             f"CV qualification (0 to 1): {_shown(facts.qualification_score, 2)}",
-            f"Quiz points: {quiz}",
             f"Interview (0 to 100): {_shown(facts.interview_score, 1)}",
             f"Interview note: {note}",
             f"Master score (0 to 100): {_shown(facts.overall_score, 1)}",
@@ -345,7 +343,6 @@ def _clip(text: str) -> str:
 def _available(facts: CompareFacts) -> str:
     parts = [
         f"CV {_shown(facts.cv_score, 2)}",
-        f"quiz {facts.mcq_score if facts.mcq_score is not None else 'not scored'}",
         f"interview {_shown(facts.interview_score, 1)}",
         f"master {_shown(facts.overall_score, 1)}",
     ]

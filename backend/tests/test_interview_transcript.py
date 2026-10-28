@@ -1,9 +1,12 @@
+import uuid
 from datetime import UTC, datetime, timedelta
 
 from livekit.api import CreateAgentDispatchRequest
 
 from app.services.interview_livekit import TRANSCRIBER_AGENT_NAME, listener_already_sent, transcriber_dispatch
 from app.services.interview_practice import is_practice_job, practice_guest_url
+from app.models.candidate import TranscriptSegment
+from app.services.interview_sessions import visible_transcript
 from app.services.interview_transcript import (
     TranscriptWrite,
     accepted_speaker,
@@ -78,6 +81,27 @@ def test_blank_speech_is_ignored() -> None:
     action, text = transcript_write(open_text=None, latest_final_text=None, text="   ", final=True)
     assert action is TranscriptWrite.IGNORE
     assert text == ""
+
+
+def test_a_profile_transcript_keeps_settled_lines_only() -> None:
+    session_id = uuid.uuid4()
+    now = datetime(2026, 10, 28, tzinfo=UTC)
+
+    def line(text: str, *, final: bool) -> TranscriptSegment:
+        return TranscriptSegment(
+            id=uuid.uuid4(),
+            session_id=session_id,
+            speaker="candidate",
+            start_time=0,
+            end_time=1,
+            text=text,
+            confidence=1,
+            is_final=final,
+            created_at=now,
+        )
+
+    kept = visible_transcript([line("  I built the API.  ", final=True), line("uhm", final=False), line("   ", final=True)])
+    assert [segment.text for segment in kept] == ["  I built the API.  "]
 
 
 def test_practice_guest_link_uses_the_public_site() -> None:

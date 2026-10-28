@@ -1,15 +1,23 @@
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
+function localHost(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1";
+}
+
 export function apiBase(): string {
   if (typeof window === "undefined") {
     return API_URL;
   }
   try {
     const url = new URL(API_URL);
-    if (url.hostname === "localhost" || url.hostname === "127.0.0.1") {
-      url.hostname = window.location.hostname;
+    if (!localHost(url.hostname)) {
+      return url.origin;
     }
-    return url.origin;
+    if (localHost(window.location.hostname)) {
+      url.hostname = window.location.hostname;
+      return url.origin;
+    }
+    return window.location.origin;
   } catch {
     return API_URL;
   }
@@ -561,6 +569,14 @@ export type RecruiterQuiz = {
   time_limit_seconds: number | null;
   submitted_at: string | null;
   review: QuizReviewItem[];
+};
+
+export type QuestionBankRecord = {
+  id: string;
+  filename: string;
+  media_type: string;
+  created_at: string;
+  question_count: number;
 };
 
 export type PolicyRecord = {

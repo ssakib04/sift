@@ -174,6 +174,7 @@ def test_report_routes_are_registered() -> None:
     assert "/interview-history" in paths
     assert "/candidates/{candidate_id}/interview-score" in paths
     assert "/candidates/{candidate_id}/interview-analysis" in paths
+    assert "/candidates/{candidate_id}/transcript" in paths
 
 
 @pytest.mark.asyncio

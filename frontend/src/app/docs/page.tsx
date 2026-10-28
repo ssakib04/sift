@@ -6,7 +6,7 @@ import { AppShell } from "@/components/ui/app-shell";
 import { buttonClass } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/page-header";
 import { Panel } from "@/components/ui/panel";
-import { ApiError, PolicyRecord, apiRequest } from "@/lib/api";
+import { ApiError, PolicyRecord, QuestionBankRecord, apiRequest } from "@/lib/api";
 
 type PolicySummary = {
   id: string;
@@ -32,10 +32,18 @@ export default function DocsPage() {
   const [openId, setOpenId] = useState<string | null>(null);
   const [summaries, setSummaries] = useState<Record<string, string>>({});
   const [reading, setReading] = useState(false);
+  const [banks, setBanks] = useState<QuestionBankRecord[]>([]);
+  const [bankFile, setBankFile] = useState<File | null>(null);
+  const [bankBusy, setBankBusy] = useState(false);
+  const [bankMessage, setBankMessage] = useState("");
 
   async function refresh() {
-    const records = await apiRequest<PolicyRecord[]>("/api/v1/policies");
+    const [records, stored] = await Promise.all([
+      apiRequest<PolicyRecord[]>("/api/v1/policies"),
+      apiRequest<QuestionBankRecord[]>("/api/v1/question-bank"),
+    ]);
     setPolicies(records);
+    setBanks(stored);
   }
 
   useEffect(() => {
@@ -75,6 +83,28 @@ export default function DocsPage() {
       setMessage(error instanceof ApiError ? error.message : "Upload failed.");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function onBank(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!bankFile) {
+      setBankMessage("Choose a PDF or DOCX file.");
+      return;
+    }
+    const body = new FormData();
+    body.append("file", bankFile);
+    setBankBusy(true);
+    setBankMessage("");
+    try {
+      await apiRequest<QuestionBankRecord>("/api/v1/question-bank", { method: "POST", body });
+      setBankFile(null);
+      await refresh();
+      setBankMessage("Question bank added.");
+    } catch (error) {
+      setBankMessage(error instanceof ApiError ? error.message : "Upload failed.");
+    } finally {
+      setBankBusy(false);
     }
   }
 
@@ -134,6 +164,52 @@ export default function DocsPage() {
                 {busy ? "Indexing..." : "Index policy"}
               </button>
               {message ? <p className="text-sm text-mist">{message}</p> : null}
+            </div>
+          </Panel>
+        </form>
+        <form onSubmit={onBank}>
+          <Panel>
+            <div className="space-y-4 p-5">
+              <div>
+                <p className="font-medium text-ivory">Company question bank</p>
+                <p className="mt-1 text-sm text-mist">
+                  Add a PDF or DOCX of interview questions. Related questions are asked as written during a call. When
+                  none fit, the interviewer writes its own.
+                </p>
+              </div>
+              <label className="flex cursor-pointer items-center justify-between gap-4 rounded-control border border-dashed border-ivory/20 bg-ivory/[0.03] px-4 py-4 hover:border-ivory/35">
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-semibold text-ivory">
+                    {bankFile ? bankFile.name : "Choose a PDF or DOCX"}
+                  </span>
+                  <span className="mt-1 block text-xs text-mist">Up to 10 MB. One question per line, or numbered.</span>
+                </span>
+                <span className="shrink-0 rounded-full border border-ivory/15 px-3 py-1 text-xs font-semibold text-ivory">
+                  Browse
+                </span>
+                <input
+                  name="question-bank"
+                  type="file"
+                  accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                  className="sr-only"
+                  onChange={(event) => setBankFile(event.target.files?.[0] ?? null)}
+                />
+              </label>
+              <button type="submit" disabled={bankBusy || !bankFile} className={buttonClass()}>
+                {bankBusy ? "Adding..." : "Add questions"}
+              </button>
+              {bankMessage ? <p className="text-sm text-mist">{bankMessage}</p> : null}
+              {banks.length === 0 ? <p className="text-sm text-mist">No question banks yet.</p> : null}
+              <ul className="space-y-2">
+                {banks.map((bank) => (
+                  <li key={bank.id} className="flex items-baseline justify-between gap-4 text-sm">
+                    <span className="truncate text-ivory">{bank.filename}</span>
+                    <span className="shrink-0 text-mist">
+                      {bank.question_count} {bank.question_count === 1 ? "question" : "questions"}
+                    </span>
+                  </li>
+                ))}
+              </ul>
             </div>
           </Panel>
         </form>

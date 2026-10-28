@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.router import api_router
 from app.core.config import get_settings
 from app.core.database import engine
+from app.core.logging import RequestLogMiddleware, configure_logging, register_exception_logging
 
 
 @asynccontextmanager
@@ -15,6 +16,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await engine.dispose()
 
 
+configure_logging()
 _settings = get_settings()
 app = FastAPI(
     title="Sift",
@@ -29,5 +31,8 @@ app.add_middleware(
     allow_origins=[origin.strip() for origin in _settings.cors_origins.split(",") if origin.strip()],
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["x-request-id"],
 )
+app.add_middleware(RequestLogMiddleware)
+register_exception_logging(app)
 app.include_router(api_router, prefix="/api/v1")

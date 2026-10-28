@@ -20,6 +20,7 @@ import {
   OpenedInterview,
   RecruiterQuiz,
   ReportRetry,
+  TranscriptTurn,
   apiRequest,
   downloadAssessmentReport,
   rememberInterview,
@@ -40,6 +41,7 @@ function CandidateProfilePage() {
   const [analysis, setAnalysis] = useState<InterviewAnalysis | null>(null);
   const [analysisStatus, setAnalysisStatus] = useState<"ready" | "pending" | "failed" | "missing">("missing");
   const [analysisNote, setAnalysisNote] = useState("");
+  const [turns, setTurns] = useState<TranscriptTurn[]>([]);
   const [message, setMessage] = useState("");
   const [joining, setJoining] = useState(false);
 
@@ -131,6 +133,15 @@ function CandidateProfilePage() {
           return;
         }
         setMessage(error instanceof Error ? error.message : "Could not load the question and answer analysis.");
+      });
+    apiRequest<TranscriptTurn[]>(`/api/v1/candidates/${params.candidateId}/transcript`)
+      .then(setTurns)
+      .catch((error: unknown) => {
+        if (error instanceof ApiError && error.code === "CANDIDATE_NOT_FOUND") {
+          setTurns([]);
+          return;
+        }
+        setMessage(error instanceof Error ? error.message : "Could not load the interview transcript.");
       });
   }, [params.candidateId]);
 
@@ -280,6 +291,9 @@ function CandidateProfilePage() {
     if (key === "claims" && claims) {
       return "Ready";
     }
+    if (key === "transcript") {
+      return turns.length ? `${turns.length} lines` : "Empty";
+    }
     if (state === "ready") {
       return "Ready";
     }
@@ -372,6 +386,8 @@ function CandidateProfilePage() {
                     quiz={quiz}
                     evaluations={candidate.evaluations}
                     ended={candidate.interview_status === "ended"}
+                    turns={turns}
+                    candidateName={candidate.full_name || ""}
                   />
                 </div>
               </Panel>

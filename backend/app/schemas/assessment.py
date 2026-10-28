@@ -69,6 +69,6 @@ class JobComparisonRead(BaseModel):
     job_id: UUID
     job_title: str
     cv_weight: float = Field(gt=0, lt=1)
-    mcq_weight: float = Field(gt=0, lt=1)
+    mcq_weight: float = Field(ge=0, lt=1)
     interview_weight: float = Field(gt=0, lt=1)
     rows: list[ComparisonRowRead]

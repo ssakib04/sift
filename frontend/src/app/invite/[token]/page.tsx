@@ -27,6 +27,8 @@ export default function InvitePage({ params }: { params: { token: string } }) {
   const [busy, setBusy] = useState(false);
   const [opened, setOpened] = useState<OpenedInterview | null>(null);
   const [phase, setPhase] = useState<"form" | "checking" | "waiting">("form");
+  const [samples, setSamples] = useState(0);
+  const [sampleLimit, setSampleLimit] = useState(8);
   const sendingFrame = useRef(false);
   const joined = useRef(false);
 
@@ -141,10 +143,13 @@ export default function InvitePage({ params }: { params: { token: string } }) {
           headers: { ...bearer(opened.token), "Content-Type": "application/json" },
           body: JSON.stringify({ image_base64: imageBase64 }),
         });
+        setSamples(ack.sample_count);
+        setSampleLimit(ack.sample_limit || 8);
         if (ack.can_join) {
           await startCall(opened, true);
         } else if (ack.concluded) {
           setPhase("waiting");
+          setMessage("Your face does not match the photo on your CV. Stay here and a recruiter can still let you in.");
         }
       } catch (error: unknown) {
         setMessage(error instanceof Error ? error.message : "The face check could not be completed.");
@@ -203,6 +208,8 @@ export default function InvitePage({ params }: { params: { token: string } }) {
               {phase === "checking" ? (
                 <FaceLobby
                   active
+                  samples={samples}
+                  sampleLimit={sampleLimit}
                   onFrame={(frame) => void sendFrame(frame)}
                   onError={() => {
                     setPhase("waiting");
@@ -211,7 +218,10 @@ export default function InvitePage({ params }: { params: { token: string } }) {
                 />
               ) : null}
               {phase === "waiting" ? (
-                <p className="text-sm text-ivory">Stay on this page. You will join when a recruiter lets you in.</p>
+                <div className="space-y-2">
+                  <p className="font-display text-2xl text-ivory">Waiting for the recruiter</p>
+                  <p className="text-sm leading-6 text-mist">Stay on this page. You will join when a recruiter lets you in.</p>
+                </div>
               ) : null}
             </article>
           </Panel>

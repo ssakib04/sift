@@ -5,6 +5,7 @@ from app.services.interview_conductor import (
     ANSWER_FILLERS,
     QUESTION_FILLERS,
     Agenda,
+    Utterance,
     answer_limit,
     call_check_line,
     echoes_prompt,
@@ -18,6 +19,7 @@ from app.services.interview_conductor import (
     note_answer,
     opening_line,
     _prompt,
+    _shape_reply,
     plan_reply,
     silence_nudge,
     spoken_limit,
@@ -25,6 +27,40 @@ from app.services.interview_conductor import (
     spoken_sentences,
     utterance_from_model,
 )
+
+
+def test_a_response_that_says_i_is_kept_before_the_next_question() -> None:
+    agenda = Agenda(
+        questions=("How do you debug an outage?", "How do you review a design?"),
+        asked=("How do you debug an outage?",),
+    )
+    utterance = Utterance(
+        say="I want to stay with the retry failure you described.",
+        covered=(),
+        finished=False,
+        offer_quiz=False,
+        answered=True,
+    )
+    shaped = _shape_reply(agenda, utterance, heard="The retries were the failure.", answered=True)
+    assert shaped.say.startswith("I want to stay with the retry failure")
+    assert "How do you review a design?" in shaped.say
+
+
+def test_a_line_that_claims_the_candidates_work_is_replaced() -> None:
+    agenda = Agenda(
+        questions=("How do you debug an outage?", "How do you review a design?"),
+        asked=("How do you debug an outage?",),
+    )
+    utterance = Utterance(
+        say="I led the migration and fixed the outage.",
+        covered=(),
+        finished=False,
+        offer_quiz=False,
+        answered=True,
+    )
+    shaped = _shape_reply(agenda, utterance, heard="I led the migration.", answered=True)
+    assert "I led" not in shaped.say
+    assert shaped.say.endswith("?")
 
 
 class _Provider:

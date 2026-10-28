@@ -180,12 +180,17 @@ services:
       WHISPER_MODEL: ${WHISPER_MODEL:-base.en}
       WHISPER_DEVICE: ${WHISPER_DEVICE:-auto}
       WHISPER_CPU_THREADS: ${WHISPER_CPU_THREADS:-4}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_STT_MODEL: ${GROQ_STT_MODEL:-whisper-large-v3-turbo}
+      GROQ_TTS_MODEL: ${GROQ_TTS_MODEL:-canopylabs/orpheus-v1-english}
+      GROQ_TTS_VOICE: ${GROQ_TTS_VOICE:-autumn}
       OMP_NUM_THREADS: "4"
       MKL_NUM_THREADS: "4"
       OPENBLAS_NUM_THREADS: "4"
       COMPANY_NAME: ${COMPANY_NAME:-Sift}
     volumes:
       - speech_data:/data/speech
+      - ./backend/app:/app/app
     depends_on:
       postgres:
         condition: service_healthy

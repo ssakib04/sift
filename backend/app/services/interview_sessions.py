@@ -27,6 +27,7 @@ from app.services.interview_score import store_interview_score
 from app.services.interview_analysis import AnalysisDraft, draft_for_transcript
 from app.services.identification import ensure_face_gate
 from app.services.interview_livekit import dispatch_room_agent, issue_livekit_token, room_has_recruiter
+from app.services.question_bank import list_question_texts
 from app.services.report_progress import advance_report_progress, initial_report_progress, reports_still_writing
 from app.services.interview_transcript import TranscriptWrite, accepted_speaker, spoken_window, transcript_write
 from app.services.interview_copilot import (
@@ -211,6 +212,21 @@ async def list_transcript(db: AsyncSession, claims: SessionClaims) -> list[Trans
     return await _segment_rows(db, row.id)
 
 
+def visible_transcript(segments: list[TranscriptSegment]) -> list[TranscriptSegment]:
+    """Settled spoken lines, in the order they were said."""
+    return [segment for segment in segments if segment.is_final and segment.text.strip()]
+
+
+async def candidate_transcript(db: AsyncSession, candidate_id: uuid.UUID) -> list[TranscriptSegment]:
+    """The interview this candidate took part in. No interview yet is an empty transcript."""
+    if await db.get(Candidate, candidate_id) is None:
+        raise InterviewError("CANDIDATE_NOT_FOUND", "Candidate not found.", 404)
+    interview = await db.scalar(select(InterviewSession).where(InterviewSession.candidate_id == candidate_id))
+    if interview is None:
+        return []
+    return visible_transcript(await _segment_rows(db, interview.id))
+
+
 async def interview_copilot(db: AsyncSession, llm: FallbackLLMManager, claims: SessionClaims) -> CopilotDraft:
     assert_recruiter(claims.role)
     row, _title, _job_id = await _require(db, claims)
@@ -225,7 +241,8 @@ async def interview_copilot(db: AsyncSession, llm: FallbackLLMManager, claims: S
             profile_available=bool(profile.strip()),
         )
     questions = await _questions(db, row.job_version_id)
-    draft = await copilot_from_transcript(llm, questions, format_transcript(_lines(segments)), profile)
+    bank = await list_question_texts(db)
+    draft = await copilot_from_transcript(llm, questions, format_transcript(_lines(segments)), profile, bank)
     if settled:
         row.copilot_explored = draft.explored
         row.copilot_gaps = draft.gaps
@@ -247,12 +264,14 @@ async def ask_interview_copilot(
     segments = await _segment_rows(db, row.id)
     profile = await _profile_text(db, row.candidate)
     checklist = await _questions(db, row.job_version_id)
+    bank = await list_question_texts(db)
     return await ask_copilot(
         llm,
         checklist,
         format_transcript(_lines(segments)),
         profile,
         asked,
+        bank,
     )
 
 

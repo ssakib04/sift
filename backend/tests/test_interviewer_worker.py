@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from app import interviewer_worker
-from app.interviewer_worker import _candidate_camera, _fill_gap, _listen, _voice
+from app.interviewer_worker import CandidateEar, _candidate_camera, _fill_gap, _listen, _sentence_audio, _voice
 
 
 def _room(*participants: SimpleNamespace) -> SimpleNamespace:
@@ -35,6 +35,39 @@ def test_piper_speaks_when_kokoro_cannot_load(monkeypatch: pytest.MonkeyPatch, t
     voice = _voice(tmp_path, "kokoro", "af_heart", "en_GB-cori-medium")
     assert isinstance(voice, _Piper)
     assert voice.model.name == "en_GB-cori-medium.onnx"
+
+
+@pytest.mark.asyncio
+async def test_a_speech_outage_returns_silence_instead_of_ending_the_call() -> None:
+    class _Broken:
+        def synthesize(self, _text: str) -> tuple[bytes, int]:
+            raise RuntimeError("groq speech failed status=400")
+
+    assert await _sentence_audio(_Broken(), "Hello there.", {}) == b""
+
+
+def test_a_groq_key_skips_the_local_speech_models(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(interviewer_worker, "_engines", None)
+
+    def _settings() -> SimpleNamespace:
+        return SimpleNamespace(
+            groq_api_key="test-key",
+            groq_stt_model="whisper-large-v3-turbo",
+            groq_tts_model="canopylabs/orpheus-v1-english",
+            groq_tts_voice="autumn",
+        )
+
+    monkeypatch.setattr(interviewer_worker, "get_settings", _settings)
+    monkeypatch.setattr(
+        interviewer_worker,
+        "prepare_speech_runtime",
+        lambda _threads: (_ for _ in ()).throw(AssertionError("local speech should stay unloaded")),
+    )
+
+    recognizer, synthesizer = interviewer_worker.speech_engines()
+    assert isinstance(recognizer, interviewer_worker.GroqRecognizer)
+    assert isinstance(synthesizer, interviewer_worker.GroqSynthesizer)
+    assert synthesizer.provider == "groq"
 
 
 def test_kokoro_is_used_when_it_loads(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -103,6 +136,36 @@ async def test_a_slow_reply_plays_the_filler_first(monkeypatch: pytest.MonkeyPat
     assert await task == "ready"
 
 
+def test_audio_during_the_question_is_not_treated_as_an_answer() -> None:
+    ear = CandidateEar()
+    ear.speaking = True
+    ear.frames.put_nowait(_pcm(1600, 1000))
+    ear.take_frame(_pcm(1600, 8000))
+    assert ear.frames.get_nowait() == _pcm(1600, 1000)
+    assert ear.frames.empty()
+    assert ear.interrupt.is_set() is False
+
+
+def test_talking_over_the_question_starts_a_fresh_listen() -> None:
+    ear = CandidateEar()
+    ear.speaking = True
+    ear.frames.put_nowait(_pcm(1600, 1000))
+    ear.take_frame(_pcm(3200, 8000))
+    assert ear.interrupt.is_set() is True
+    assert ear.speaking is False
+    assert ear.frames.get_nowait() == _pcm(3200, 8000)
+    assert ear.frames.empty()
+
+
+def test_a_departure_survives_clearing_the_microphone() -> None:
+    ear = CandidateEar()
+    ear.frames.put_nowait(_pcm(1600, 8000))
+    ear.frames.put_nowait(None)
+    ear.discard_pending()
+    assert ear.frames.get_nowait() is None
+    assert ear.frames.empty()
+
+
 def _pcm(samples: int, value: int) -> bytes:
     return struct.pack("<h", value) * samples
 
@@ -118,27 +181,60 @@ class _Recognizer:
     def __init__(self, text: str) -> None:
         self.text = text
         self.calls = 0
+        self.samples = 0
 
     def transcribe(self, pcm: bytes, rate: int) -> str:
         self.calls += 1
+        self.samples = len(pcm) // 2
         return self.text
 
 
 @pytest.mark.asyncio
-async def test_a_finished_short_answer_ends_at_the_early_pause() -> None:
+async def test_a_finished_answer_waits_through_four_seconds_of_silence() -> None:
     recognizer = _Recognizer("I led the migration.")
-    ear = _Ear([_pcm(6400, 8000), _pcm(11200, 0)])
-    heard = await asyncio.wait_for(_listen(ear, recognizer, "Tell me about a project you shipped."), timeout=3)
+    ear = _Ear([_pcm(6400, 8000), _pcm(64000, 0)])
+    heard = await asyncio.wait_for(
+        _listen(ear, recognizer, "Tell me about a project you shipped.", min_wall_s=0),
+        timeout=3,
+    )
     assert heard == "I led the migration."
     assert recognizer.calls == 1
 
 
 @pytest.mark.asyncio
+async def test_a_buffered_pause_does_not_end_the_turn() -> None:
+    recognizer = _Recognizer("I led the migration.")
+    ear = _Ear([_pcm(6400, 8000), _pcm(64000, 0)])
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(
+            _listen(ear, recognizer, "Tell me about a project you shipped."),
+            timeout=0.4,
+        )
+    assert recognizer.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_a_one_second_pause_does_not_end_the_answer() -> None:
+    recognizer = _Recognizer("I led the migration and then checked the logs.")
+    ear = _Ear([_pcm(6400, 8000), _pcm(16000, 0), _pcm(6400, 8000), _pcm(64000, 0)])
+    heard = await asyncio.wait_for(
+        _listen(ear, recognizer, "Tell me about a project you shipped.", min_wall_s=0),
+        timeout=3,
+    )
+    assert heard == "I led the migration and then checked the logs."
+    assert recognizer.calls == 1
+    assert recognizer.samples > 6400 + 16000
+
+
+@pytest.mark.asyncio
 async def test_a_reconnect_blip_does_not_end_the_listen() -> None:
     recognizer = _Recognizer("I led the migration.")
-    ear = _Ear([None, _pcm(6400, 8000), _pcm(11200, 0)])
+    ear = _Ear([None, _pcm(6400, 8000), _pcm(64000, 0)])
     ear.candidate_present = True
-    heard = await asyncio.wait_for(_listen(ear, recognizer, "Tell me about a project you shipped."), timeout=3)
+    heard = await asyncio.wait_for(
+        _listen(ear, recognizer, "Tell me about a project you shipped.", min_wall_s=0),
+        timeout=3,
+    )
     assert heard == "I led the migration."
 
 
@@ -155,7 +251,7 @@ async def test_the_candidate_leaving_ends_the_listen() -> None:
 @pytest.mark.asyncio
 async def test_a_pause_reuses_the_transcript_taken_during_the_silence() -> None:
     recognizer = _Recognizer("I would start with the logs")
-    ear = _Ear([_pcm(6400, 8000), _pcm(11200, 0), _pcm(3200, 0)])
-    heard = await asyncio.wait_for(_listen(ear, recognizer, "Where would you start?"), timeout=3)
+    ear = _Ear([_pcm(6400, 8000), _pcm(48000, 0), _pcm(16000, 0)])
+    heard = await asyncio.wait_for(_listen(ear, recognizer, "Where would you start?", min_wall_s=0), timeout=3)
     assert heard == "I would start with the logs"
     assert recognizer.calls == 1

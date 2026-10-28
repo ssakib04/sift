@@ -105,13 +105,14 @@ def _loaded() -> dict[str, object]:
     }
 
 
-def test_weights_are_thirty_twenty_and_fifty() -> None:
-    assert CV_WEIGHT + MCQ_WEIGHT + INTERVIEW_WEIGHT == 1
+def test_weights_are_cv_and_interview_only() -> None:
+    assert MCQ_WEIGHT == 0
+    assert CV_WEIGHT + INTERVIEW_WEIGHT == 1
     assert checklist_points(0.85) == 85.0
     assert checklist_points(1) == 100.0
     assert checklist_points(85) == 85.0
     assert interview_points(8.5, 8.0, 8.0, 8.5) == 82.5
-    assert weighted_overall(85.0, 80.0, 82.5) == 82.8
+    assert weighted_overall(85.0, 82.5) == 83.4
     assert classify_suitability(75.0) == "strong_fit"
     assert classify_suitability(74.9) == "moderate_fit"
     assert classify_suitability(50.0) == "moderate_fit"
@@ -127,10 +128,9 @@ def test_q1_is_not_treated_as_q10() -> None:
 
 
 def test_missing_inputs_are_gaps_and_block_the_overall_score() -> None:
-    gaps = evidence_gaps_for(None, None, None)
+    gaps = evidence_gaps_for(None, None)
     assert gaps == [
         "CV screening snapshot is not available.",
-        "Submitted MCQ score is not available.",
         "Interview Q&A analysis is not available.",
     ]
 
@@ -152,7 +152,7 @@ def test_a_cv_contradiction_is_an_evidence_gap() -> None:
         ],
         "contradictions": [note],
     }
-    gaps = evidence_gaps_for({"aggregate_score": 1, "evaluations": []}, 80, qa)
+    gaps = evidence_gaps_for({"aggregate_score": 1, "evaluations": []}, qa)
     assert note in gaps
     kept = normalize_qa(qa)
     assert kept is not None
@@ -170,7 +170,8 @@ async def test_missing_inputs_do_not_call_the_model() -> None:
     assert result["llm_tier"] == "none"
     assert result["fallback_used"] is False
     assert "No CV excerpt or interview transcript turn was available to cite." in result["narrative"]
-    assert "30 percent" in result["narrative"]
+    assert "37.5 percent" in result["narrative"]
+    assert "quiz" not in result["narrative"].casefold()
 
 
 @pytest.mark.asyncio
@@ -179,10 +180,10 @@ async def test_workflow_weights_the_three_scores_and_drops_invented_citations() 
     result = await build_master_assessment_graph(FallbackLLMManager(provider, provider, provider))(_loaded())
     assert provider.calls == 2
     assert result["component_scores"]["cv_screening"] == 85.0
-    assert result["component_scores"]["mcq_quiz"] == 80.0
+    assert "mcq_quiz" not in result["component_scores"]
     assert result["component_scores"]["interview_qa"] == 82.5
     assert result["component_scores"]["technical_dimension"] == 88.0
-    assert result["overall_score"] == 82.8
+    assert result["overall_score"] == 83.4
     assert result["overall_suitability"] == "strong_fit"
     assert result["strengths"] == ["Candidate has strong FastAPI experience."]
     assert result["weaknesses"] == []
@@ -210,13 +211,15 @@ async def test_a_narrative_without_a_catalog_citation_is_replaced() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_missing_quiz_prevents_a_suitability_label() -> None:
+async def test_a_quiz_score_does_not_change_the_assessment() -> None:
     provider = ScriptedProvider()
-    state = _loaded()
-    state["mcq_score"] = None
-    result = await build_master_assessment_graph(FallbackLLMManager(provider, provider, provider))(state)
-    assert result["overall_score"] is None
-    assert result["overall_suitability"] == "insufficient_evidence"
-    assert result["component_scores"]["cv_screening"] == 85.0
-    assert result["component_scores"]["mcq_quiz"] is None
-    assert "Submitted MCQ score is not available." in result["evidence_gaps"]
+    without_quiz = _loaded()
+    without_quiz["mcq_score"] = None
+    with_quiz = _loaded()
+    with_quiz["mcq_score"] = 10
+    plain = await build_master_assessment_graph(FallbackLLMManager(provider, provider, provider))(without_quiz)
+    scored = await build_master_assessment_graph(FallbackLLMManager(provider, provider, provider))(with_quiz)
+    assert plain["overall_score"] == scored["overall_score"] == 83.4
+    assert plain["overall_suitability"] == scored["overall_suitability"] == "strong_fit"
+    assert "mcq" not in json.dumps(plain["evidence_gaps"]).casefold()
+    assert "quiz" not in json.dumps(plain["narrative"]).casefold()

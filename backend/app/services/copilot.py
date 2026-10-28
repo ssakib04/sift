@@ -924,7 +924,7 @@ def _score_sentence(person: NamedPerson) -> str:
             f"technical {_points(person.technical_dimension)}, "
             f"experience {_points(person.experience_dimension)}, "
             f"qualification {_points(person.qualification_dimension)}. "
-            f"Quiz {_points(person.mcq_score)}. Interview Q&A {_points(person.interview_qa)}."
+            f"Interview Q&A {_points(person.interview_qa)}."
         )
     return " ".join(parts)
 
@@ -940,7 +940,6 @@ def _dimension_note(left: NamedPerson, right: NamedPerson) -> str:
         ("technical", left.technical_dimension, right.technical_dimension),
         ("experience", left.experience_dimension, right.experience_dimension),
         ("qualification", left.qualification_dimension, right.qualification_dimension),
-        ("quiz", left.mcq_score, right.mcq_score),
         ("interview Q&A", left.interview_qa, right.interview_qa),
     ]
     notes: list[str] = []

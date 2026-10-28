@@ -3,6 +3,7 @@ import logging
 
 from app.core.config import get_settings
 from app.core.database import SessionFactory
+from app.core.logging import configure_logging
 from app.core.llm_fallback import create_fallback_manager
 from app.services.email_worker import ingest_inbox
 from app.services.embeddings import create_embedder
@@ -34,7 +35,7 @@ async def poll_forever() -> None:
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO)
+    configure_logging()
     asyncio.run(poll_forever())
 
 

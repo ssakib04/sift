@@ -7,12 +7,19 @@ from app.api.deps import get_llm
 from app.api.v1.auth import require_recruiter
 from app.core.database import get_session
 from app.core.llm_fallback import FallbackLLMManager
-from app.schemas.interview import AnalysisRead, AnalysisRunRead, JustificationRead, QAPairRead, ReportRetryRead
+from app.schemas.interview import (
+    AnalysisRead,
+    AnalysisRunRead,
+    JustificationRead,
+    QAPairRead,
+    ReportRetryRead,
+    TranscriptTurnRead,
+)
 from app.schemas.interview_quality import InterviewQualityRead
 from app.schemas.interview_score import InterviewHistoryRead, InterviewScoreRead
 from app.services.interview_quality import QualityError, build_interview_quality, read_interview_quality
 from app.services.interview_rules import InterviewError
-from app.services.interview_sessions import request_interview_analysis, retry_report
+from app.services.interview_sessions import candidate_transcript, request_interview_analysis, retry_report
 from app.services.interview_score import (
     ScoreError,
     build_interview_score,
@@ -93,6 +100,29 @@ async def create_analysis(
     except InterviewError as exc:
         raise _http(exc) from exc
     return AnalysisRunRead(state=state)
+
+
+@router.get("/candidates/{candidate_id}/transcript", response_model=list[TranscriptTurnRead])
+async def read_candidate_transcript(
+    candidate_id: UUID,
+    session: AsyncSession = Depends(get_session),
+) -> list[TranscriptTurnRead]:
+    try:
+        segments = await candidate_transcript(session, candidate_id)
+    except InterviewError as exc:
+        raise _http(exc) from exc
+    return [
+        TranscriptTurnRead(
+            id=segment.id,
+            speaker=segment.speaker,
+            start_time=segment.start_time,
+            end_time=segment.end_time,
+            text=segment.text.strip(),
+            confidence=segment.confidence,
+            is_final=segment.is_final,
+        )
+        for segment in segments
+    ]
 
 
 @router.get("/candidates/{candidate_id}/interview-analysis", response_model=AnalysisRead)

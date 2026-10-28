@@ -59,11 +59,10 @@ def _person(
 
 
 def test_pipeline_complete_requires_every_stage() -> None:
-    assert pipeline_complete(cv_scored=True, interview_ended=True, quiz_submitted=True, overall_score=81.0)
-    assert not pipeline_complete(cv_scored=False, interview_ended=True, quiz_submitted=True, overall_score=81.0)
-    assert not pipeline_complete(cv_scored=True, interview_ended=False, quiz_submitted=True, overall_score=81.0)
-    assert not pipeline_complete(cv_scored=True, interview_ended=True, quiz_submitted=False, overall_score=81.0)
-    assert not pipeline_complete(cv_scored=True, interview_ended=True, quiz_submitted=True, overall_score=None)
+    assert pipeline_complete(cv_scored=True, interview_ended=True, overall_score=81.0)
+    assert not pipeline_complete(cv_scored=False, interview_ended=True, overall_score=81.0)
+    assert not pipeline_complete(cv_scored=True, interview_ended=False, overall_score=81.0)
+    assert not pipeline_complete(cv_scored=True, interview_ended=True, overall_score=None)
 
 
 def test_final_order_uses_master_score_then_name() -> None:

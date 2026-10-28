@@ -352,7 +352,7 @@ async def test_noisy_transcript_scores_the_same_q_and_a_and_master_assessment() 
     assert clean.articulation == noisy.articulation == 9.0
     assert clean.gaps == noisy.gaps == []
     interview = interview_points(9.0, 9.0, 9.0, 9.0)
-    expected = weighted_overall(85.0, 80.0, interview)
+    expected = weighted_overall(85.0, interview)
     cv = {
         "aggregate_score": 0.85,
         "technical_score": 0.85,

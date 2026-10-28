@@ -9,9 +9,11 @@ import {
   InterviewScore,
   MasterAssessment,
   RecruiterQuiz,
+  TranscriptTurn,
 } from "@/lib/api";
 
 export const REPORTS = [
+  { key: "transcript", label: "Transcript" },
   { key: "score", label: "Interview score" },
   { key: "quality", label: "Interview quality" },
   { key: "qa", label: "Q&A analysis" },
@@ -45,6 +47,8 @@ export function CandidateReport({
   quiz,
   evaluations,
   ended,
+  turns,
+  candidateName,
 }: {
   selected: ReportKey;
   progress: Record<string, string>;
@@ -60,7 +64,12 @@ export function CandidateReport({
   quiz: RecruiterQuiz | null;
   evaluations: CandidateEvaluation[];
   ended: boolean;
+  turns: TranscriptTurn[];
+  candidateName: string;
 }) {
+  if (selected === "transcript") {
+    return <TranscriptReport turns={turns} candidateName={candidateName} />;
+  }
   if (selected === "score") {
     return <ScoreReport score={score} phase={progress.score || ""} onRetry={onRetry} ended={ended} />;
   }
@@ -88,6 +97,37 @@ export function CandidateReport({
     return <QuizReport quiz={quiz} />;
   }
   return <ChecklistReport evaluations={evaluations} />;
+}
+
+function speakerLabel(speaker: string, candidateName: string): string {
+  if (speaker === "candidate") {
+    return candidateName.trim() || "Candidate";
+  }
+  if (speaker === "recruiter") {
+    return "Recruiter";
+  }
+  return speaker;
+}
+
+function TranscriptReport({ turns, candidateName }: { turns: TranscriptTurn[]; candidateName: string }) {
+  return (
+    <section className="space-y-4">
+      <h2 className="font-display text-3xl font-medium text-ivory">Transcript</h2>
+      <p className="text-base leading-7 text-mist">What was said in this candidate's interview.</p>
+      {turns.length === 0 ? (
+        <p className="text-base leading-7 text-ivory">No interview transcript yet.</p>
+      ) : (
+        <ol className="space-y-5">
+          {turns.map((turn) => (
+            <li key={turn.id} className="space-y-1">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-mist">{speakerLabel(turn.speaker, candidateName)}</p>
+              <p className="text-base leading-7 text-ivory">{turn.text}</p>
+            </li>
+          ))}
+        </ol>
+      )}
+    </section>
+  );
 }
 
 function waitingCopy(phase: string, writing: string, failed: string, idle: string): string {
@@ -433,19 +473,14 @@ function AssessmentReport({
               {assessment.overall_score !== null ? `Overall ${assessment.overall_score.toFixed(1)}` : "Overall not calculated"}
             </p>
             <p className="text-base leading-7 text-mist">
-              CV {Math.round(assessment.cv_weight * 100)}% · Quiz {Math.round(assessment.mcq_weight * 100)}% · Interview{" "}
-              {Math.round(assessment.interview_weight * 100)}%
+              CV {(assessment.cv_weight * 100).toFixed(1)}% · Interview {(assessment.interview_weight * 100).toFixed(1)}%
             </p>
           </div>
           <Panel>
-            <dl className="grid gap-2 px-4 py-3 text-base leading-7 sm:grid-cols-3">
+            <dl className="grid gap-2 px-4 py-3 text-base leading-7 sm:grid-cols-2">
               <div>
                 <dt className="text-mist">CV screening</dt>
                 <dd className="text-ivory">{assessment.component_scores.cv_screening?.toFixed(1) ?? "—"}</dd>
-              </div>
-              <div>
-                <dt className="text-mist">MCQ quiz</dt>
-                <dd className="text-ivory">{assessment.component_scores.mcq_quiz?.toFixed(1) ?? "—"}</dd>
               </div>
               <div>
                 <dt className="text-mist">Interview Q&A</dt>

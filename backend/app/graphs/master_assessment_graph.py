@@ -7,9 +7,9 @@ from app.core.llm_fallback import FallbackLLMManager
 from app.graphs.job_creation_graph import JobGraphError, parse_json_object
 from app.graphs.state import MasterAssessmentState
 
-CV_WEIGHT = Decimal("0.30")
-MCQ_WEIGHT = Decimal("0.20")
-INTERVIEW_WEIGHT = Decimal("0.50")
+CV_WEIGHT = Decimal("0.375")
+MCQ_WEIGHT = Decimal("0")
+INTERVIEW_WEIGHT = Decimal("0.625")
 STRONG_FIT_MIN = Decimal("75.0")
 MODERATE_FIT_MIN = Decimal("50.0")
 INTERVIEW_DIMENSIONS = ("relevance", "technical_accuracy", "completeness", "articulation")
@@ -34,7 +34,7 @@ class AssessmentGraphError(RuntimeError):
 def build_master_assessment_graph(
     llm: FallbackLLMManager,
 ) -> Callable[[MasterAssessmentState], Awaitable[MasterAssessmentState]]:
-    """Workflow 4: load CV, MCQ, and Q&A, then write one cited assessment."""
+    """Workflow 4: load the CV and the interview Q&A, then write one cited assessment."""
 
     async def load_candidate_data(state: MasterAssessmentState) -> dict[str, object]:
         candidate_id = str(state.get("candidate_id") or "").strip()
@@ -44,9 +44,6 @@ def build_master_assessment_graph(
 
     async def load_cv_screening_snapshot(state: MasterAssessmentState) -> dict[str, object]:
         return {"cv_screening": normalize_cv(state.get("cv_screening"))}
-
-    async def load_mcq_score(state: MasterAssessmentState) -> dict[str, object]:
-        return {"mcq_score": normalize_mcq(state.get("mcq_score"))}
 
     async def load_qa_analysis(state: MasterAssessmentState) -> dict[str, object]:
         return {"qa_analysis": normalize_qa(state.get("qa_analysis"))}
@@ -88,7 +85,6 @@ def build_master_assessment_graph(
         return {
             "evidence_gaps": evidence_gaps_for(
                 cv if isinstance(cv, dict) else None,
-                state.get("mcq_score"),
                 qa if isinstance(qa, dict) else None,
             )
         }
@@ -98,7 +94,6 @@ def build_master_assessment_graph(
         qa = state.get("qa_analysis")
         scores, overall, suitability = score_components(
             cv if isinstance(cv, dict) else None,
-            state.get("mcq_score"),
             qa if isinstance(qa, dict) else None,
         )
         return {"component_scores": scores, "overall_score": overall, "overall_suitability": suitability}
@@ -121,6 +116,7 @@ def build_master_assessment_graph(
             'Return JSON {"narrative":"..."} . '
             "Every claim about the candidate must include a source_reference copied from the catalog.\n"
             f"Suitability: {state.get('overall_suitability')}\n"
+            "The quiz is a separate score. Do not mention it.\n"
             f"Scores: {state.get('component_scores')}\n"
             f"{_catalog_block(catalog)}"
         )
@@ -149,7 +145,6 @@ def build_master_assessment_graph(
     graph: StateGraph = StateGraph(MasterAssessmentState)
     graph.add_node("load_candidate_data", load_candidate_data)
     graph.add_node("load_cv_screening_snapshot", load_cv_screening_snapshot)
-    graph.add_node("load_mcq_score", load_mcq_score)
     graph.add_node("load_qa_analysis", load_qa_analysis)
     graph.add_node("synthesize_strengths_and_weaknesses", synthesize_strengths_and_weaknesses)
     graph.add_node("identify_evidence_gaps", identify_evidence_gaps)
@@ -158,8 +153,7 @@ def build_master_assessment_graph(
     graph.add_node("persist_consolidated_assessment", persist_consolidated_assessment)
     graph.add_edge(START, "load_candidate_data")
     graph.add_edge("load_candidate_data", "load_cv_screening_snapshot")
-    graph.add_edge("load_cv_screening_snapshot", "load_mcq_score")
-    graph.add_edge("load_mcq_score", "load_qa_analysis")
+    graph.add_edge("load_cv_screening_snapshot", "load_qa_analysis")
     graph.add_edge("load_qa_analysis", "synthesize_strengths_and_weaknesses")
     graph.add_edge("synthesize_strengths_and_weaknesses", "identify_evidence_gaps")
     graph.add_edge("identify_evidence_gaps", "calculate_overall_suitability")
@@ -278,10 +272,18 @@ def interview_points(relevance: float, technical_accuracy: float, completeness: 
     return float((mean * 10).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
 
 
-def weighted_overall(cv: float, mcq: float, interview: float) -> float:
-    """Apply the locked mix: CV 30%, MCQ 20%, interview Q&A 50%."""
-    total = Decimal(str(cv)) * CV_WEIGHT + Decimal(str(mcq)) * MCQ_WEIGHT + Decimal(str(interview)) * INTERVIEW_WEIGHT
+def weighted_overall(cv: float, interview: float) -> float:
+    """CV 37.5% and interview Q&A 62.5%. The quiz is not part of this score."""
+    total = Decimal(str(cv)) * CV_WEIGHT + Decimal(str(interview)) * INTERVIEW_WEIGHT
     return float(total.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
+
+
+def overall_from_parts(cv: float | None, interview: float | None) -> tuple[float | None, str]:
+    """The published master score. A missing CV or interview leaves it unset."""
+    if cv is None or interview is None:
+        return None, "insufficient_evidence"
+    overall = weighted_overall(cv, interview)
+    return overall, classify_suitability(overall)
 
 
 def classify_suitability(overall: float | None) -> str:
@@ -301,14 +303,12 @@ def suitability_label(key: str) -> str:
 
 def score_components(
     cv: dict[str, object] | None,
-    mcq: int | None,
     qa: dict[str, object] | None,
 ) -> tuple[dict[str, float | None], float | None, str]:
     cv_score = checklist_points(float(cv["aggregate_score"])) if cv is not None else None
     technical = checklist_points(float(cv["technical_score"])) if cv is not None else None
     experience = checklist_points(float(cv["experience_score"])) if cv is not None else None
     qualification = checklist_points(float(cv["qualification_score"])) if cv is not None else None
-    mcq_score = float(mcq) if mcq is not None else None
     interview = (
         interview_points(
             float(qa["relevance"]),
@@ -319,16 +319,15 @@ def score_components(
         if qa is not None
         else None
     )
-    overall = weighted_overall(cv_score, mcq_score, interview) if None not in {cv_score, mcq_score, interview} else None
+    overall, suitability = overall_from_parts(cv_score, interview)
     scores = {
         "cv_screening": cv_score,
-        "mcq_quiz": mcq_score,
         "interview_qa": interview,
         "technical_dimension": technical,
         "experience_dimension": experience,
         "qualification_dimension": qualification,
     }
-    return scores, overall, classify_suitability(overall)
+    return scores, overall, suitability
 
 
 def evidence_catalog(cv: dict[str, object] | None, qa: dict[str, object] | None) -> dict[tuple[str, str], str]:
@@ -358,7 +357,7 @@ def evidence_catalog(cv: dict[str, object] | None, qa: dict[str, object] | None)
     return catalog
 
 
-def evidence_gaps_for(cv: dict[str, object] | None, mcq: int | None, qa: dict[str, object] | None) -> list[str]:
+def evidence_gaps_for(cv: dict[str, object] | None, qa: dict[str, object] | None) -> list[str]:
     gaps: list[str] = []
     if cv is None:
         gaps.append("CV screening snapshot is not available.")
@@ -371,8 +370,6 @@ def evidence_gaps_for(cv: dict[str, object] | None, mcq: int | None, qa: dict[st
                 query_id = str(item.get("query_id") or "")
                 label = str(item.get("question") or "").strip() or query_id
                 gaps.append(f"CV evidence gap for {query_id}: {label}.")
-    if mcq is None:
-        gaps.append("Submitted MCQ score is not available.")
     if qa is None:
         gaps.append("Interview Q&A analysis is not available.")
         return gaps
@@ -506,14 +503,12 @@ def fallback_narrative(
     catalog: dict[tuple[str, str], str],
 ) -> str:
     cv_text = _points(scores.get("cv_screening"))
-    mcq_text = _points(scores.get("mcq_quiz"))
     qa_text = _points(scores.get("interview_qa"))
     overall_text = f"{overall:.1f}" if overall is not None else "not calculated"
     sentences = [
         (
-            "The master score weights CV screening at 30 percent "
-            f"({cv_text}), the MCQ quiz at 20 percent ({mcq_text}), "
-            f"and interview Q&A at 50 percent ({qa_text})."
+            "The master score weights CV screening at 37.5 percent "
+            f"({cv_text}) and interview Q&A at 62.5 percent ({qa_text})."
         ),
         f"The overall score is {overall_text}. Overall suitability is {suitability_label(suitability)}.",
     ]
